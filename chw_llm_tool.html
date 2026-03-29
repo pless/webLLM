@@ -1,0 +1,418 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CHW LLM Feedback Tool</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+  :root {
+    --bg:#0f1419; --sf:#1a1f2e; --sf2:#232940; --bd:#2d3548;
+    --tx:#e2e8f0; --tx2:#8892a4; --ac:#6366f1; --ac2:#818cf8;
+    --gn:#22c55e; --rd:#ef4444; --or:#f59e0b;
+    --mono:'JetBrains Mono','SF Mono','Fira Code',monospace;
+    --sans:'Inter',-apple-system,sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:var(--sans);background:var(--bg);color:var(--tx);min-height:100vh}
+  .container{max-width:960px;margin:0 auto;padding:28px 20px}
+  h1{font-size:21px;font-weight:700;margin-bottom:2px}
+  .sub{color:var(--tx2);font-size:12px;margin-bottom:24px}
+  .step{background:var(--sf);border:1px solid var(--bd);border-radius:8px;padding:18px;margin-bottom:14px}
+  .step-h{display:flex;align-items:center;gap:8px;margin-bottom:12px}
+  .step-n{background:var(--ac);color:#fff;width:24px;height:24px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;flex-shrink:0}
+  .step-t{font-size:14px;font-weight:600}
+  label{display:block;font-size:11px;color:var(--tx2);font-weight:500;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px}
+  textarea{width:100%;min-height:150px;background:var(--bg);border:1px solid var(--bd);border-radius:6px;color:var(--tx);font-family:var(--mono);font-size:11.5px;padding:10px;resize:vertical;line-height:1.6}
+  textarea:focus,input:focus,select:focus{outline:none;border-color:var(--ac)}
+  input[type=text],input[type=password],input[type=number],select{background:var(--bg);border:1px solid var(--bd);border-radius:4px;color:var(--tx);font-size:12px;padding:7px 10px;font-family:var(--sans)}
+  select{cursor:pointer}
+  .btn{padding:7px 16px;border-radius:6px;border:none;font-size:12px;font-weight:600;cursor:pointer;font-family:var(--sans);transition:opacity .15s}
+  .btn:hover{opacity:.85} .btn:disabled{opacity:.4;cursor:not-allowed}
+  .btn-p{background:var(--ac);color:#fff} .btn-g{background:#16a34a;color:#fff}
+  .btn-d{background:#dc262622;color:var(--rd);border:1px solid #dc262644}
+  .btn-s{background:var(--sf2);color:var(--tx);border:1px solid var(--bd)}
+  .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  .file-drop{border:2px dashed var(--bd);border-radius:8px;padding:24px;text-align:center;cursor:pointer;position:relative;transition:border-color .2s}
+  .file-drop:hover{border-color:var(--ac)}
+  .file-drop input{position:absolute;inset:0;opacity:0;cursor:pointer}
+  .file-info{background:var(--sf2);border-radius:6px;padding:8px 12px;margin-top:8px;font-size:12px;color:var(--tx2);display:flex;justify-content:space-between;align-items:center}
+  .prog-bar{height:4px;background:var(--sf2);border-radius:2px;overflow:hidden;margin-top:8px}
+  .prog-fill{height:100%;background:var(--ac);border-radius:2px;transition:width .3s}
+  .log{background:var(--bg);border:1px solid var(--bd);border-radius:6px;padding:8px;max-height:160px;overflow-y:auto;font-family:var(--mono);font-size:11px;line-height:1.6;color:var(--tx2);margin-top:8px}
+  .log .err{color:var(--rd)} .log .ok{color:var(--gn)} .log .info{color:var(--ac2)}
+  .card{background:var(--bg);border:1px solid var(--bd);border-radius:6px;padding:10px;margin-bottom:6px}
+  .pill{display:inline-block;border-radius:9999px;padding:2px 8px;font-size:10px;font-weight:600;margin:1px 3px 1px 0}
+  .pill-r{background:#22c55e22;color:var(--gn)} .pill-u{background:#ef444422;color:var(--rd)} .pill-m{background:#f59e0b22;color:var(--or)}
+  .grid5{display:grid;grid-template-columns:1fr 80px 55px 55px 55px;font-size:12px}
+  .grid5 .hdr{padding:6px 4px;font-size:10px;font-weight:600;color:var(--tx2);text-transform:uppercase}
+  .grid5 .cell{padding:5px 4px;border-top:1px solid var(--bd)}
+  .cb-row{display:flex;align-items:center;gap:8px;margin-top:10px;cursor:pointer}
+  .cb-row input{accent-color:var(--ac);width:16px;height:16px}
+  .hint{font-size:11px;color:var(--tx2);margin-top:4px;font-style:italic}
+  .collapsible{cursor:pointer} .collapsible:hover{background:var(--sf2)}
+  pre.resp{font-family:var(--mono);font-size:11px;white-space:pre-wrap;color:var(--tx2);line-height:1.5;max-height:200px;overflow:auto;margin:8px 0 0}
+  @media(max-width:640px){.container{padding:14px}.step{padding:12px}.grid5{grid-template-columns:1fr 60px 40px 40px 40px;font-size:11px}}
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>CHW LLM Feedback Tool</h1>
+  <p class="sub">Upload CHW notes → run through an LLM with your prompt → analyze which tests are recommended</p>
+
+  <!-- 1: API -->
+  <div class="step">
+    <div class="step-h"><div class="step-n">1</div><div class="step-t">API Configuration</div></div>
+    <div class="row" style="gap:14px">
+      <div style="min-width:140px">
+        <label>Model</label>
+        <select id="model">
+          <option>gpt-4o</option><option>gpt-4o-mini</option>
+          <option>gpt-4.1</option><option>gpt-4.1-mini</option><option>gpt-4.1-nano</option>
+          <option>o1-mini</option><option>o1</option><option>o3-mini</option>
+        </select>
+      </div>
+      <div style="flex:1;min-width:180px">
+        <label>OpenAI API Key</label>
+        <div class="row">
+          <input id="apiKey" type="password" placeholder="sk-..." style="flex:1">
+          <button class="btn btn-s" onclick="let e=$('apiKey');e.type=e.type==='password'?'text':'password'">Show</button>
+        </div>
+      </div>
+      <div style="flex:1;min-width:240px">
+        <label>Proxy URL <span style="text-transform:none;font-weight:400">(your Cloudflare Worker)</span></label>
+        <input id="proxyUrl" type="text" value="https://llm-worker.robert-pless.workers.dev" style="width:100%">
+      </div>
+      <div style="min-width:90px">
+        <label>Concurrency</label>
+        <input id="conc" type="number" value="3" min="1" max="10" style="width:60px">
+      </div>
+    </div>
+    <p class="hint">Key is sent from your browser → your proxy → OpenAI. Never stored.</p>
+  </div>
+
+  <!-- 2: Prompts -->
+  <div class="step">
+    <div class="step-h"><div class="step-n">2</div><div class="step-t">Prompts</div></div>
+    <label>Main LLM Prompt <span style="font-weight:400;text-transform:none">— <code style="color:var(--ac2)">{note}</code> = CHW note</span></label>
+    <textarea id="mainPrompt">You are a clinical decision support system reviewing community health worker (CHW) consultation notes.
+
+CONTEXT:
+- This clinic serves a region where only 4% of patients presenting with fever-like symptoms actually test positive for malaria.
+- Approximately 50% of CHWs currently test for malaria regardless of presentation.
+- Over-testing wastes limited rapid diagnostic test (RDT) supplies and delays appropriate care.
+
+TASK:
+Review the following CHW consultation note and provide clinical feedback. What diagnostic tests do you recommend and why? Flag any tests that seem unnecessary given the presentation. Suggest any tests the CHW may have missed.
+
+CHW NOTE:
+{note}</textarea>
+
+    <div style="margin-top:12px">
+      <label>Test Extraction Prompt <span style="font-weight:400;text-transform:none">— <code style="color:var(--ac2)">{note}</code> + <code style="color:var(--ac2)">{feedback}</code></span></label>
+      <textarea id="extractPrompt" style="min-height:110px">Given this CHW consultation note and corresponding LLM clinical feedback, extract ALL medical/diagnostic tests mentioned.
+
+CHW NOTE:
+{note}
+
+LLM FEEDBACK:
+{feedback}
+
+Respond ONLY with a JSON object (no markdown, no backticks):
+{
+  "tests_recommended": ["test1", "test2"],
+  "tests_unnecessary": ["test3"],
+  "tests_missed": ["test4"]
+}</textarea>
+    </div>
+  </div>
+
+  <!-- 3: Upload -->
+  <div class="step">
+    <div class="step-h"><div class="step-n">3</div><div class="step-t">Upload CHW Notes</div></div>
+    <p style="font-size:12px;color:var(--tx2);margin-bottom:8px">
+      Excel/CSV with columns: <code style="color:var(--ac2)">assessment_id</code>, <code style="color:var(--ac2)">CHW1_unassisted</code>
+    </p>
+    <div class="file-drop" id="fileDrop">
+      <input type="file" accept=".xlsx,.xls,.csv" id="fileInput" onchange="handleFile(event)">
+      <div style="font-size:26px;margin-bottom:6px">📄</div>
+      <p style="color:var(--tx2);font-size:12px">Drop file here or click to browse</p>
+    </div>
+    <div id="fileInfo" style="display:none" class="file-info">
+      <span id="fileInfoText"></span>
+      <button class="btn btn-s" onclick="clearFile()" style="padding:3px 10px;font-size:11px">Clear</button>
+    </div>
+    <label class="cb-row"><input type="checkbox" id="debugMode"><span style="font-size:13px;text-transform:none;color:var(--tx)">Debug mode — first 10 rows only</span></label>
+  </div>
+
+  <!-- 4: Run -->
+  <div class="step">
+    <div class="step-h"><div class="step-n">4</div><div class="step-t">Run</div></div>
+    <div class="row">
+      <button class="btn btn-p" id="runBtn" onclick="runPipeline()" disabled>Run Pipeline</button>
+      <button class="btn btn-d" id="stopBtn" onclick="stopPipeline()" style="display:none">Stop</button>
+      <span id="statusText" style="font-size:12px;color:var(--tx2)"></span>
+    </div>
+    <div id="progressWrap" style="display:none">
+      <div class="prog-bar"><div class="prog-fill" id="progFill"></div></div>
+      <div style="font-size:11px;color:var(--tx2);margin-top:4px" id="progText"></div>
+    </div>
+    <div class="log" id="log" style="display:none"></div>
+  </div>
+
+  <!-- 5: Results -->
+  <div class="step" id="resultsSection" style="display:none">
+    <div class="step-h"><div class="step-n">5</div><div class="step-t">Results</div></div>
+    <div class="row" style="justify-content:space-between;margin-bottom:10px">
+      <span style="font-size:14px;font-weight:600">Test Recommendation Summary</span>
+      <button class="btn btn-g" onclick="exportResults()">Download .xlsx</button>
+    </div>
+    <div id="summaryGrid"></div>
+
+    <div class="row" style="justify-content:space-between;margin:16px 0 8px">
+      <span style="font-size:14px;font-weight:600">Per-Note Results</span>
+      <span id="resultStats" style="font-size:11px;color:var(--tx2)"></span>
+    </div>
+    <div id="noteResults"></div>
+  </div>
+</div>
+
+<script>
+let DATA = [], RESULTS = [], aborted = false;
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+
+function log(msg, cls='') {
+  const el = $('log'); el.style.display='block';
+  el.innerHTML += `<div class="${cls}">${new Date().toLocaleTimeString()} — ${msg}</div>`;
+  el.scrollTop = el.scrollHeight;
+}
+function setProg(done, total) {
+  $('progressWrap').style.display='block';
+  $('progFill').style.width = (total ? done/total*100 : 0)+'%';
+  $('progText').textContent = `${done}/${total} (${total ? Math.round(done/total*100) : 0}%)`;
+}
+
+// ── File ──
+const drop = $('fileDrop');
+drop.addEventListener('dragover', e => { e.preventDefault(); drop.style.borderColor='var(--ac)'; });
+drop.addEventListener('dragleave', () => drop.style.borderColor='');
+drop.addEventListener('drop', e => { e.preventDefault(); drop.style.borderColor='';
+  if(e.dataTransfer.files.length){ $('fileInput').files=e.dataTransfer.files; handleFile({target:{files:e.dataTransfer.files}}); }
+});
+
+function handleFile(e) {
+  const f = e.target.files?.[0]; if(!f) return;
+  const reader = new FileReader();
+  reader.onload = evt => {
+    const wb = XLSX.read(evt.target.result, {type:'array'});
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    const json = XLSX.utils.sheet_to_json(ws, {defval:''});
+    if(!json.length) return;
+    const cols = Object.keys(json[0]);
+    const idCol = cols.find(c => c.toLowerCase().replace(/\s+/g,'_') === 'assessment_id');
+    const noteCol = cols.find(c => c.toLowerCase().replace(/\s+/g,'_') === 'chw1_unassisted');
+    if(!idCol || !noteCol){ alert(`Need: assessment_id, CHW1_unassisted\nFound: ${cols.join(', ')}`); return; }
+    DATA = json.map(r => ({ id: String(r[idCol]||'').trim(), note: String(r[noteCol]||'').trim() })).filter(r => r.note);
+    $('fileInfo').style.display='flex';
+    $('fileInfoText').textContent = `${f.name} — ${DATA.length} rows`;
+    $('runBtn').disabled = false;
+  };
+  reader.readAsArrayBuffer(f);
+}
+function clearFile() { DATA=[]; RESULTS=[]; $('fileInfo').style.display='none'; $('fileInput').value=''; $('runBtn').disabled=true; $('resultsSection').style.display='none'; }
+
+// ── API ──
+async function callLLM(prompt) {
+  const key = $('apiKey').value.trim();
+  const model = $('model').value;
+  const proxy = $('proxyUrl').value.trim();
+  if(!key) throw new Error('No API key');
+  if(!proxy) throw new Error('No proxy URL');
+
+  const isReasoning = model.startsWith('o1') || model.startsWith('o3');
+  const body = { model, messages: [{role:'user', content: prompt}] };
+  if(!isReasoning) body.max_tokens = 1500;
+
+  const resp = await fetch(proxy, {
+    method: 'POST',
+    headers: { 'Content-Type':'application/json', 'Authorization': `Bearer ${key}` },
+    body: JSON.stringify(body),
+  });
+  const d = await resp.json();
+  if(d.error) throw new Error(d.error.message || JSON.stringify(d.error));
+  return d.choices?.[0]?.message?.content || '';
+}
+
+function parseTests(text) {
+  try {
+    const c = text.replace(/```json\s*/g,'').replace(/```\s*/g,'').trim();
+    const o = JSON.parse(c);
+    return {
+      rec: (o.tests_recommended||[]).map(s=>String(s).toLowerCase().trim()),
+      unn: (o.tests_unnecessary||[]).map(s=>String(s).toLowerCase().trim()),
+      miss: (o.tests_missed||[]).map(s=>String(s).toLowerCase().trim()),
+    };
+  } catch { return {rec:[],unn:[],miss:[]}; }
+}
+
+// ── Pipeline ──
+async function runPipeline() {
+  if(!DATA.length) return;
+  const mainP = $('mainPrompt').value;
+  const extP = $('extractPrompt').value;
+  const conc = parseInt($('conc').value)||3;
+  const debug = $('debugMode').checked;
+  const rows = debug ? DATA.slice(0,10) : DATA;
+
+  RESULTS = rows.map(r => ({...r, llm_response:'', rec:[], unn:[], miss:[], error:''}));
+  aborted = false;
+  $('runBtn').disabled=true; $('stopBtn').style.display='inline-block';
+  $('log').innerHTML=''; $('log').style.display='none'; $('resultsSection').style.display='none';
+  log(`Pipeline: ${rows.length} notes, model=${$('model').value}, conc=${conc}`, 'info');
+
+  let done = 0;
+  const total = rows.length * 2;
+  setProg(0, total);
+
+  // Phase 1
+  const q1 = rows.map((_,i)=>i);
+  const w1 = async () => {
+    while(q1.length && !aborted) {
+      const i = q1.shift(); if(i===undefined) break;
+      try {
+        const resp = await callLLM(mainP.replace(/\{note\}/g, rows[i].note));
+        RESULTS[i].llm_response = resp;
+        log(`[${i+1}/${rows.length}] ✓ ${rows[i].id}`, 'ok');
+      } catch(e) {
+        RESULTS[i].error = e.message;
+        log(`[${i+1}/${rows.length}] ✗ ${rows[i].id}: ${e.message}`, 'err');
+      }
+      done++; setProg(done, total);
+    }
+  };
+  await Promise.all(Array.from({length:Math.min(conc,rows.length)}, w1));
+
+  if(aborted){ finish('Stopped'); return; }
+  log('Phase 1 done. Extracting tests...', 'info');
+
+  // Phase 2
+  const q2 = rows.map((_,i)=>i).filter(i => RESULTS[i].llm_response && !RESULTS[i].error);
+  const w2 = async () => {
+    while(q2.length && !aborted) {
+      const i = q2.shift(); if(i===undefined) break;
+      try {
+        const filled = extP.replace(/\{note\}/g,rows[i].note).replace(/\{feedback\}/g,RESULTS[i].llm_response);
+        const resp = await callLLM(filled);
+        const p = parseTests(resp);
+        Object.assign(RESULTS[i], p);
+      } catch(e) { log(`[ext ${i+1}] ✗ ${e.message}`, 'err'); }
+      done++; setProg(done, total);
+    }
+  };
+  await Promise.all(Array.from({length:Math.min(conc,q2.length||1)}, w2));
+  finish(aborted ? 'Stopped' : 'Complete');
+}
+
+function finish(status) {
+  $('runBtn').disabled=false; $('stopBtn').style.display='none';
+  $('statusText').textContent = status;
+  const ok = RESULTS.filter(r=>!r.error).length, errs = RESULTS.filter(r=>r.error).length;
+  log(`${status}. ${ok} succeeded, ${errs} errors.`, 'info');
+  renderResults();
+}
+function stopPipeline() { aborted=true; }
+
+// ── Render ──
+function renderResults() {
+  $('resultsSection').style.display='block';
+  const ok = RESULTS.filter(r=>!r.error).length;
+  const errs = RESULTS.filter(r=>r.error).length;
+
+  // Summary
+  const counts = {};
+  RESULTS.forEach(r => {
+    r.rec.forEach(t=>{ if(!counts[t])counts[t]={r:0,u:0,m:0}; counts[t].r++; });
+    r.unn.forEach(t=>{ if(!counts[t])counts[t]={r:0,u:0,m:0}; counts[t].u++; });
+    r.miss.forEach(t=>{ if(!counts[t])counts[t]={r:0,u:0,m:0}; counts[t].m++; });
+  });
+  const sorted = Object.entries(counts).sort((a,b)=>(b[1].r+b[1].u+b[1].m)-(a[1].r+a[1].u+a[1].m));
+
+  let sh = '<div class="grid5">';
+  sh += '<div class="hdr">Test</div><div class="hdr">Count</div><div class="hdr" style="color:var(--gn)">Rec</div><div class="hdr" style="color:var(--rd)">Unn</div><div class="hdr" style="color:var(--or)">Miss</div>';
+  if(!sorted.length) sh += '<div class="cell" style="grid-column:1/-1;text-align:center;color:var(--tx2)">No tests extracted</div>';
+  sorted.forEach(([n,d])=>{
+    const tot=d.r+d.u+d.m;
+    sh += `<div class="cell">${n}</div>`;
+    sh += `<div class="cell" style="color:var(--ac2);font-weight:700">${tot} <span style="color:var(--tx2);font-weight:400;font-size:10px">(${Math.round(tot/ok*100)}%)</span></div>`;
+    sh += `<div class="cell" style="color:var(--gn)">${d.r||'–'}</div>`;
+    sh += `<div class="cell" style="color:var(--rd)">${d.u||'–'}</div>`;
+    sh += `<div class="cell" style="color:var(--or)">${d.m||'–'}</div>`;
+  });
+  sh += '</div>';
+  $('summaryGrid').innerHTML = sh;
+  $('resultStats').textContent = `${ok} done, ${errs} errors`;
+
+  // Per-note
+  let nh = '';
+  RESULTS.forEach((r,i) => {
+    const pills = [
+      ...r.rec.slice(0,3).map(t=>`<span class="pill pill-r">${t}</span>`),
+      ...r.unn.slice(0,2).map(t=>`<span class="pill pill-u">${t}</span>`),
+      ...r.miss.slice(0,2).map(t=>`<span class="pill pill-m">${t}</span>`),
+    ].join('');
+    nh += `<div class="card collapsible" style="border-left:3px solid var(--${r.error?'rd':'gn'})" onclick="this.querySelector('.detail').style.display=this.querySelector('.detail').style.display==='none'?'block':'none'">
+      <div class="row" style="justify-content:space-between">
+        <div class="row" style="flex:1;min-width:0;overflow:hidden">
+          <span style="font-weight:700;font-size:11px;flex-shrink:0">${esc(r.id)}</span>
+          <span style="font-size:11px;color:var(--tx2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.note.slice(0,65))}…</span>
+        </div>
+        <div class="row" style="flex-shrink:0">${pills}<span style="font-size:10px;color:var(--tx2);margin-left:4px">▶</span></div>
+      </div>
+      <div class="detail" style="display:none">
+        ${r.error ? `<div style="color:var(--rd);font-size:12px;margin-top:6px">Error: ${esc(r.error)}</div>` : ''}
+        <pre class="resp">${esc(r.llm_response)}</pre>
+      </div>
+    </div>`;
+  });
+  $('noteResults').innerHTML = nh;
+  $('resultsSection').scrollIntoView({behavior:'smooth'});
+}
+
+// ── Export ──
+function exportResults() {
+  if(!RESULTS.length) return;
+  const model = $('model').value;
+  const ws1 = XLSX.utils.json_to_sheet(RESULTS.map(r=>({
+    assessment_id:r.id, CHW1_unassisted:r.note, LLM_response:r.llm_response,
+    tests_recommended:r.rec.join('; '), tests_unnecessary:r.unn.join('; '),
+    tests_missed:r.miss.join('; '), error:r.error,
+  })));
+  const counts={};
+  const ok=RESULTS.filter(r=>!r.error).length;
+  RESULTS.forEach(r=>{
+    r.rec.forEach(t=>{if(!counts[t])counts[t]={r:0,u:0,m:0};counts[t].r++});
+    r.unn.forEach(t=>{if(!counts[t])counts[t]={r:0,u:0,m:0};counts[t].u++});
+    r.miss.forEach(t=>{if(!counts[t])counts[t]={r:0,u:0,m:0};counts[t].m++});
+  });
+  const ws2 = XLSX.utils.json_to_sheet(
+    Object.entries(counts).sort((a,b)=>(b[1].r+b[1].u+b[1].m)-(a[1].r+a[1].u+a[1].m))
+      .map(([n,d])=>({test:n,total:d.r+d.u+d.m,pct:((d.r+d.u+d.m)/ok*100).toFixed(1)+'%',recommended:d.r,unnecessary:d.u,missed:d.m}))
+  );
+  const ws3 = XLSX.utils.json_to_sheet([
+    {param:'model',value:model},{param:'notes',value:RESULTS.length},
+    {param:'errors',value:RESULTS.filter(r=>r.error).length},
+    {param:'main_prompt',value:$('mainPrompt').value},
+    {param:'extract_prompt',value:$('extractPrompt').value},
+    {param:'timestamp',value:new Date().toISOString()},
+  ]);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb,ws1,'Results');
+  XLSX.utils.book_append_sheet(wb,ws2,'Test Summary');
+  XLSX.utils.book_append_sheet(wb,ws3,'Config');
+  XLSX.writeFile(wb, `chw_results_${model}_${new Date().toISOString().slice(0,10)}.xlsx`);
+}
+</script>
+</body>
+</html>
