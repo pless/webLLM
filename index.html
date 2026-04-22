@@ -224,7 +224,7 @@ async function search(text) {
   statusEl.textContent = "Encoding query…";
   try {
     if (!clipClient) clipClient = await Client.connect(SPACE);
-    const result = await clipClient.predict("/predict", { text });
+    const result = await clipClient.predict("/encode", { text });
     // result.data is the list of return values from the Python fn.
     // Our fn returns a single dict, so result.data[0] is that dict.
     const payload = Array.isArray(result.data) ? result.data[0] : result.data;
