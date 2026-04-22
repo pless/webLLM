@@ -197,15 +197,11 @@ function render(order) {
       tile.appendChild(s);
     }
 
-    // Click -> open Google Maps place page (one tap from Photos)
-    if (hotel.gpid) {
-      const a = document.createElement("a");
-      a.href = `https://www.google.com/maps/place/?q=place_id:${encodeURIComponent(hotel.gpid)}`;
-      a.target = "_blank";
-      a.rel = "noopener";
-      a.setAttribute("aria-label", `Open ${hotel.name} in Google Maps`);
-      tile.appendChild(a);
-    }
+    // Click -> our own hotel page with all that hotel's images
+    const a = document.createElement("a");
+    a.href = `./hotel.html?id=${encodeURIComponent(m.hotel_id)}`;
+    a.setAttribute("aria-label", `View all images for ${hotel.name}`);
+    tile.appendChild(a);
 
     frag.appendChild(tile);
   }
@@ -228,7 +224,7 @@ async function search(text) {
   statusEl.textContent = "Encoding query…";
   try {
     if (!clipClient) clipClient = await Client.connect(SPACE);
-    const result = await clipClient.predict("/encode", { text });
+    const result = await clipClient.predict("/predict", { text });
     // result.data is the list of return values from the Python fn.
     // Our fn returns a single dict, so result.data[0] is that dict.
     const payload = Array.isArray(result.data) ? result.data[0] : result.data;
