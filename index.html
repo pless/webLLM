@@ -58,6 +58,20 @@
     background: rgba(0,0,0,0.6); color: #fff; padding: 2px 6px;
     font-size: 11px; border-radius: 3px; font-variant-numeric: tabular-nums;
   }
+  .hotel-name {
+    position: absolute; top: 0; left: 0; right: 0;
+    background: linear-gradient(to bottom, rgba(0,0,0,0.75), rgba(0,0,0,0));
+    color: #fff; padding: 6px 8px 16px 8px;
+    font-size: 11px; line-height: 1.2;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    pointer-events: none;
+  }
+  .tile a {
+    position: absolute; inset: 0; display: block;
+  }
+  .tile a:focus-visible {
+    outline: 2px solid var(--accent); outline-offset: -2px;
+  }
 </style>
 </head>
 <body>
@@ -81,6 +95,7 @@ const SPACE = "robertpless/clip-text-encoder";
 const FEATURES_URL = "./features_int8.npy";
 const SCALE_URL = "./features_scale.json";
 const INDEX_URL = "./features_index.csv";
+const HOTELS_URL = "./hotels.json";
 const MAX_TILES = 500; // don't render 10k tiles at once
 // ----------------------------
 
@@ -94,6 +109,7 @@ let features = null;   // Int8Array of N*D (quantized)
 let scale = 1.0;       // dequant: float = int8 * scale
 let N = 0, D = 0;
 let meta = [];         // array of {id, hotel_id, path, local_file}
+let hotels = {};       // {hotel_id: {name, gpid}}
 let clipClient = null;
 
 // ---------- npy loader (supports int8 and float32) ----------
@@ -157,19 +173,40 @@ function render(order) {
   const frag = document.createDocumentFragment();
   for (const { idx, score } of slice) {
     const m = meta[idx];
+    const hotel = hotels[m.hotel_id] || { name: `Hotel ${m.hotel_id}`, gpid: null };
+
     const tile = document.createElement("div");
     tile.className = "tile";
+
     const img = document.createElement("img");
     img.loading = "lazy";
-    img.src = m.path;            // remote S3 URL from CSV
-    img.alt = `hotel ${m.hotel_id}`;
+    img.src = m.path;
+    img.alt = hotel.name;
     tile.appendChild(img);
+
+    const label = document.createElement("div");
+    label.className = "hotel-name";
+    label.textContent = hotel.name;
+    label.title = hotel.name; // full name on hover
+    tile.appendChild(label);
+
     if (score !== undefined) {
       const s = document.createElement("span");
       s.className = "score";
       s.textContent = score.toFixed(3);
       tile.appendChild(s);
     }
+
+    // Click -> open Google Maps place page (one tap from Photos)
+    if (hotel.gpid) {
+      const a = document.createElement("a");
+      a.href = `https://www.google.com/maps/place/?q=place_id:${encodeURIComponent(hotel.gpid)}`;
+      a.target = "_blank";
+      a.rel = "noopener";
+      a.setAttribute("aria-label", `Open ${hotel.name} in Google Maps`);
+      tile.appendChild(a);
+    }
+
     frag.appendChild(tile);
   }
   gridEl.appendChild(frag);
@@ -191,7 +228,7 @@ async function search(text) {
   statusEl.textContent = "Encoding query…";
   try {
     if (!clipClient) clipClient = await Client.connect(SPACE);
-    const result = await clipClient.predict("/encode", { text });
+    const result = await clipClient.predict("/predict", { text });
     // result.data is the list of return values from the Python fn.
     // Our fn returns a single dict, so result.data[0] is that dict.
     const payload = Array.isArray(result.data) ? result.data[0] : result.data;
@@ -225,16 +262,17 @@ async function search(text) {
 // ---------- init ----------
 (async () => {
   try {
-    statusEl.textContent = "Loading features_int8.npy…";
-    const [npy, scaleJson] = await Promise.all([
+    statusEl.textContent = "Loading data…";
+    const [npy, scaleJson, csvText, hotelsJson] = await Promise.all([
       loadNpy(FEATURES_URL),
       fetch(SCALE_URL).then(r => r.json()),
+      fetch(INDEX_URL).then(r => r.text()),
+      fetch(HOTELS_URL).then(r => r.json()),
     ]);
     features = npy.data; N = npy.N; D = npy.D;
     scale = scaleJson.scale;
+    hotels = hotelsJson;
 
-    statusEl.textContent = "Loading features_index.csv…";
-    const csvText = await (await fetch(INDEX_URL)).text();
     meta = parseCSV(csvText);
     if (meta.length !== N) {
       console.warn(`row mismatch: features N=${N}, csv rows=${meta.length}`);
