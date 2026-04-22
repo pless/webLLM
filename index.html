@@ -1,1 +1,255 @@
-<html>Hello World!!</html>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Austin Hotel Image Search — CLIP</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<style>
+  :root {
+    --bg: #0f1115;
+    --panel: #171a21;
+    --text: #e6e6e6;
+    --muted: #8b94a3;
+    --accent: #6ea8ff;
+    --border: #252a35;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background: var(--bg); color: var(--text);
+  }
+  header {
+    position: sticky; top: 0; z-index: 10;
+    background: var(--panel); border-bottom: 1px solid var(--border);
+    padding: 12px 16px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap;
+  }
+  header h1 { font-size: 16px; margin: 0; font-weight: 600; }
+  #query {
+    flex: 1; min-width: 240px;
+    padding: 10px 12px; font-size: 15px;
+    background: #0b0d12; color: var(--text);
+    border: 1px solid var(--border); border-radius: 6px;
+  }
+  #query:focus { outline: 2px solid var(--accent); border-color: var(--accent); }
+  button {
+    padding: 10px 16px; font-size: 14px; font-weight: 500;
+    background: var(--accent); color: #0b0d12; border: 0; border-radius: 6px;
+    cursor: pointer;
+  }
+  button:disabled { opacity: 0.5; cursor: wait; }
+  button.secondary {
+    background: transparent; color: var(--text); border: 1px solid var(--border);
+  }
+  #status { font-size: 13px; color: var(--muted); }
+  #grid {
+    display: grid; gap: 4px; padding: 8px;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  }
+  .tile {
+    position: relative; aspect-ratio: 1; background: #1a1d25; overflow: hidden;
+    border-radius: 4px;
+  }
+  .tile img {
+    width: 100%; height: 100%; object-fit: cover; display: block;
+    loading: lazy;
+  }
+  .score {
+    position: absolute; top: 4px; left: 4px;
+    background: rgba(0,0,0,0.6); color: #fff; padding: 2px 6px;
+    font-size: 11px; border-radius: 3px; font-variant-numeric: tabular-nums;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Austin Hotel Images</h1>
+  <input id="query" type="text" placeholder="e.g. &quot;bathroom with walk-in shower&quot;" />
+  <button id="searchBtn">Search</button>
+  <button id="shuffleBtn" class="secondary">Shuffle</button>
+  <span id="status">Loading…</span>
+</header>
+
+<div id="grid"></div>
+
+<!-- Gradio client from CDN -->
+<script type="module">
+import { Client } from "https://cdn.jsdelivr.net/npm/@gradio/client/dist/index.min.js";
+
+// ---------- config ----------
+const SPACE = "robertpless/clip-text-encoder";
+const FEATURES_URL = "./features_int8.npy";
+const SCALE_URL = "./features_scale.json";
+const INDEX_URL = "./features_index.csv";
+const MAX_TILES = 500; // don't render 10k tiles at once
+// ----------------------------
+
+const statusEl = document.getElementById("status");
+const gridEl = document.getElementById("grid");
+const queryEl = document.getElementById("query");
+const searchBtn = document.getElementById("searchBtn");
+const shuffleBtn = document.getElementById("shuffleBtn");
+
+let features = null;   // Int8Array of N*D (quantized)
+let scale = 1.0;       // dequant: float = int8 * scale
+let N = 0, D = 0;
+let meta = [];         // array of {id, hotel_id, path, local_file}
+let clipClient = null;
+
+// ---------- npy loader (supports int8 and float32) ----------
+async function loadNpy(url) {
+  const buf = new Uint8Array(await (await fetch(url)).arrayBuffer());
+  // magic \x93NUMPY
+  if (buf[0] !== 0x93 || String.fromCharCode(...buf.slice(1, 6)) !== "NUMPY") {
+    throw new Error("not an .npy file");
+  }
+  const major = buf[6];
+  const headerLen = major === 1
+    ? new DataView(buf.buffer, 8, 2).getUint16(0, true)
+    : new DataView(buf.buffer, 8, 4).getUint32(0, true);
+  const headerStart = major === 1 ? 10 : 12;
+  const header = new TextDecoder().decode(buf.slice(headerStart, headerStart + headerLen));
+  const shapeMatch = header.match(/\(\s*(\d+)\s*,\s*(\d+)\s*\)/);
+  if (!shapeMatch) throw new Error("can't parse shape: " + header);
+  const n = +shapeMatch[1], d = +shapeMatch[2];
+  const dataStart = headerStart + headerLen;
+  const byteStart = buf.byteOffset + dataStart;
+
+  let data;
+  if (header.includes("'|i1'") || header.includes('"|i1"') || header.includes("int8")) {
+    data = new Int8Array(buf.buffer.slice(byteStart, byteStart + n * d));
+  } else if (header.includes("<f4")) {
+    data = new Float32Array(buf.buffer.slice(byteStart, byteStart + n * d * 4));
+  } else {
+    throw new Error("unsupported dtype in header: " + header);
+  }
+  return { data, N: n, D: d };
+}
+
+// ---------- minimal csv parser (handles quoted fields) ----------
+function parseCSV(text) {
+  const rows = [];
+  let i = 0, field = "", row = [], inQuotes = false;
+  while (i < text.length) {
+    const c = text[i];
+    if (inQuotes) {
+      if (c === '"' && text[i+1] === '"') { field += '"'; i += 2; continue; }
+      if (c === '"') { inQuotes = false; i++; continue; }
+      field += c; i++;
+    } else {
+      if (c === '"') { inQuotes = true; i++; continue; }
+      if (c === ",") { row.push(field); field = ""; i++; continue; }
+      if (c === "\n") { row.push(field); rows.push(row); field = ""; row = []; i++; continue; }
+      if (c === "\r") { i++; continue; }
+      field += c; i++;
+    }
+  }
+  if (field.length || row.length) { row.push(field); rows.push(row); }
+  const header = rows.shift();
+  return rows.filter(r => r.length === header.length)
+             .map(r => Object.fromEntries(header.map((h, j) => [h, r[j]])));
+}
+
+// ---------- render ----------
+function render(order) {
+  gridEl.innerHTML = "";
+  const slice = order.slice(0, MAX_TILES);
+  const frag = document.createDocumentFragment();
+  for (const { idx, score } of slice) {
+    const m = meta[idx];
+    const tile = document.createElement("div");
+    tile.className = "tile";
+    const img = document.createElement("img");
+    img.loading = "lazy";
+    img.src = m.path;            // remote S3 URL from CSV
+    img.alt = `hotel ${m.hotel_id}`;
+    tile.appendChild(img);
+    if (score !== undefined) {
+      const s = document.createElement("span");
+      s.className = "score";
+      s.textContent = score.toFixed(3);
+      tile.appendChild(s);
+    }
+    frag.appendChild(tile);
+  }
+  gridEl.appendChild(frag);
+}
+
+function shuffle() {
+  const order = meta.map((_, i) => ({ idx: i }));
+  for (let i = order.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [order[i], order[j]] = [order[j], order[i]];
+  }
+  render(order);
+}
+
+// ---------- search ----------
+async function search(text) {
+  if (!text.trim()) { shuffle(); return; }
+  searchBtn.disabled = true;
+  statusEl.textContent = "Encoding query…";
+  try {
+    if (!clipClient) clipClient = await Client.connect(SPACE);
+    const result = await clipClient.predict("/predict", { text });
+    // result.data is the list of return values from the Python fn.
+    // Our fn returns a single dict, so result.data[0] is that dict.
+    const payload = Array.isArray(result.data) ? result.data[0] : result.data;
+    const q = payload.embedding;
+    if (!q || q.length !== D) {
+      throw new Error(`bad embedding: len=${q?.length} expected ${D}`);
+    }
+    statusEl.textContent = "Scoring…";
+    // Compute sims: dequantized features (N,D) @ q (D,) -> (N,)
+    // We fold `scale` into the final score rather than per-element,
+    // so: score_i = scale * sum_k (int8_feat[i,k] * q[k])
+    const scores = new Float32Array(N);
+    for (let i = 0; i < N; i++) {
+      let s = 0;
+      const base = i * D;
+      for (let k = 0; k < D; k++) s += features[base + k] * q[k];
+      scores[i] = s * scale;
+    }
+    const order = Array.from({ length: N }, (_, i) => ({ idx: i, score: scores[i] }));
+    order.sort((a, b) => b.score - a.score);
+    render(order);
+    statusEl.textContent = `Top ${Math.min(MAX_TILES, N)} of ${N} images for: "${text}"`;
+  } catch (e) {
+    console.error(e);
+    statusEl.textContent = "Error: " + e.message;
+  } finally {
+    searchBtn.disabled = false;
+  }
+}
+
+// ---------- init ----------
+(async () => {
+  try {
+    statusEl.textContent = "Loading features_int8.npy…";
+    const [npy, scaleJson] = await Promise.all([
+      loadNpy(FEATURES_URL),
+      fetch(SCALE_URL).then(r => r.json()),
+    ]);
+    features = npy.data; N = npy.N; D = npy.D;
+    scale = scaleJson.scale;
+
+    statusEl.textContent = "Loading features_index.csv…";
+    const csvText = await (await fetch(INDEX_URL)).text();
+    meta = parseCSV(csvText);
+    if (meta.length !== N) {
+      console.warn(`row mismatch: features N=${N}, csv rows=${meta.length}`);
+    }
+    statusEl.textContent = `Loaded ${N} images (dim=${D}). Showing random sample.`;
+    shuffle();
+  } catch (e) {
+    console.error(e);
+    statusEl.textContent = "Failed to load data: " + e.message;
+  }
+})();
+
+searchBtn.addEventListener("click", () => search(queryEl.value));
+queryEl.addEventListener("keydown", e => { if (e.key === "Enter") search(queryEl.value); });
+shuffleBtn.addEventListener("click", () => { queryEl.value = ""; shuffle(); });
+</script>
+</body>
+</html>
