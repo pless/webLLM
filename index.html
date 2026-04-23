@@ -255,10 +255,54 @@ function shuffle() {
   render(order);
 }
 
+// ---------- persistence helpers ----------
+// Back-button from hotel.html should restore the same results without
+// re-encoding. We stash the top-MAX_TILES order in sessionStorage keyed by
+// query, and mirror the query into ?q=… so the URL is shareable and survives
+// a reload.
+const CACHE_KEY = "lastSearch";
+
+function readCachedOrder(query) {
+  try {
+    const raw = sessionStorage.getItem(CACHE_KEY);
+    if (!raw) return null;
+    const obj = JSON.parse(raw);
+    return obj.query === query ? obj.order : null;
+  } catch { return null; }
+}
+
+function writeCachedOrder(query, order) {
+  try {
+    sessionStorage.setItem(CACHE_KEY, JSON.stringify({
+      query,
+      order: order.slice(0, MAX_TILES),
+    }));
+  } catch { /* quota exceeded or disabled — non-fatal */ }
+}
+
+function setUrlQuery(query) {
+  const url = new URL(location.href);
+  if (query) url.searchParams.set("q", query);
+  else url.searchParams.delete("q");
+  history.replaceState(null, "", url);
+}
+
 // ---------- search ----------
 async function search(text) {
   if (!text.trim()) { shuffle(); return; }
   searchBtn.disabled = true;
+
+  // Cache hit: we've already computed this query in this session. Render
+  // the stashed order directly — no HF round-trip, no scoring loop.
+  const cached = readCachedOrder(text);
+  if (cached) {
+    render(cached);
+    setUrlQuery(text);
+    statusEl.textContent = `Top ${Math.min(MAX_TILES, N)} of ${N} images for: "${text}" (cached)`;
+    searchBtn.disabled = false;
+    return;
+  }
+
   statusEl.textContent = "Encoding query… (first call after idle can take ~30s)";
   try {
     const payload = await encodeText(text);
@@ -280,6 +324,8 @@ async function search(text) {
     const order = Array.from({ length: N }, (_, i) => ({ idx: i, score: scores[i] }));
     order.sort((a, b) => b.score - a.score);
     render(order);
+    writeCachedOrder(text, order);
+    setUrlQuery(text);
     statusEl.textContent = `Top ${Math.min(MAX_TILES, N)} of ${N} images for: "${text}"`;
   } catch (e) {
     console.error(e);
@@ -307,8 +353,17 @@ async function search(text) {
     if (meta.length !== N) {
       console.warn(`row mismatch: features N=${N}, csv rows=${meta.length}`);
     }
-    statusEl.textContent = `Loaded ${N} images (dim=${D}). Showing random sample.`;
-    shuffle();
+
+    // If the URL carries a query (shared link, reload, or back from hotel.html),
+    // re-run that search — it'll hit the session cache if we've seen it before.
+    const urlQuery = new URLSearchParams(location.search).get("q") || "";
+    if (urlQuery) {
+      queryEl.value = urlQuery;
+      search(urlQuery);
+    } else {
+      statusEl.textContent = `Loaded ${N} images (dim=${D}). Showing random sample.`;
+      shuffle();
+    }
   } catch (e) {
     console.error(e);
     statusEl.textContent = "Failed to load data: " + e.message;
@@ -317,7 +372,11 @@ async function search(text) {
 
 searchBtn.addEventListener("click", () => search(queryEl.value));
 queryEl.addEventListener("keydown", e => { if (e.key === "Enter") search(queryEl.value); });
-shuffleBtn.addEventListener("click", () => { queryEl.value = ""; shuffle(); });
+shuffleBtn.addEventListener("click", () => {
+  queryEl.value = "";
+  setUrlQuery("");
+  shuffle();
+});
 </script>
 </body>
 </html>
