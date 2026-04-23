@@ -86,12 +86,12 @@
 
 <div id="grid"></div>
 
-<!-- Gradio client from CDN -->
-<script type="module">
-import { Client } from "https://cdn.jsdelivr.net/npm/@gradio/client/dist/index.min.js";
-
+<script>
 // ---------- config ----------
 const SPACE = "robertpless/clip-text-encoder";
+const SPACE_URL = `https://${SPACE.replace("/", "-")}.hf.space`;
+const ENCODE_URL = `${SPACE_URL}/gradio_api/call/encode`;
+const ENCODE_TIMEOUT_MS = 60_000; // cold starts can take 30–60s
 const FEATURES_URL = "./features_int8.npy";
 const SCALE_URL = "./features_scale.json";
 const INDEX_URL = "./features_index.csv";
@@ -110,7 +110,6 @@ let scale = 1.0;       // dequant: float = int8 * scale
 let N = 0, D = 0;
 let meta = [];         // array of {id, hotel_id, path, local_file}
 let hotels = {};       // {hotel_id: {name, gpid}}
-let clipClient = null;
 
 // ---------- npy loader (supports int8 and float32) ----------
 async function loadNpy(url) {
@@ -164,6 +163,44 @@ function parseCSV(text) {
   const header = rows.shift();
   return rows.filter(r => r.length === header.length)
              .map(r => Object.fromEntries(header.map((h, j) => [h, r[j]])));
+}
+
+// ---------- text encoder (direct REST against Gradio, no @gradio/client) ----------
+// Two-step Gradio call: POST to create event, then GET SSE stream for result.
+async function encodeText(text) {
+  const signal = AbortSignal.timeout(ENCODE_TIMEOUT_MS);
+
+  const postResp = await fetch(ENCODE_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ data: [text] }),
+    signal,
+  });
+  if (!postResp.ok) throw new Error(`encode POST ${postResp.status}`);
+  const { event_id } = await postResp.json();
+  if (!event_id) throw new Error("no event_id");
+
+  const streamResp = await fetch(`${ENCODE_URL}/${event_id}`, { signal });
+  if (!streamResp.ok) throw new Error(`encode stream ${streamResp.status}`);
+  const body = await streamResp.text();
+
+  // SSE: blocks separated by blank lines. Pull the one whose event is "complete".
+  let event = null;
+  for (const line of body.split("\n")) {
+    if (line.startsWith("event:")) {
+      event = line.slice(6).trim();
+    } else if (line.startsWith("data:")) {
+      if (event === "complete") {
+        const parsed = JSON.parse(line.slice(5).trim());
+        // Gradio wraps fn returns in a list; our fn returns a single dict.
+        return Array.isArray(parsed) ? parsed[0] : parsed;
+      }
+      if (event === "error") {
+        throw new Error(`encoder error: ${line.slice(5).trim()}`);
+      }
+    }
+  }
+  throw new Error("no complete event in stream");
 }
 
 // ---------- render ----------
@@ -221,13 +258,9 @@ function shuffle() {
 async function search(text) {
   if (!text.trim()) { shuffle(); return; }
   searchBtn.disabled = true;
-  statusEl.textContent = "Encoding query…";
+  statusEl.textContent = "Encoding query… (first call after idle can take ~30s)";
   try {
-    if (!clipClient) clipClient = await Client.connect(SPACE);
-    const result = await clipClient.predict("/encode", { text });
-    // result.data is the list of return values from the Python fn.
-    // Our fn returns a single dict, so result.data[0] is that dict.
-    const payload = Array.isArray(result.data) ? result.data[0] : result.data;
+    const payload = await encodeText(text);
     const q = payload.embedding;
     if (!q || q.length !== D) {
       throw new Error(`bad embedding: len=${q?.length} expected ${D}`);
@@ -249,7 +282,7 @@ async function search(text) {
     statusEl.textContent = `Top ${Math.min(MAX_TILES, N)} of ${N} images for: "${text}"`;
   } catch (e) {
     console.error(e);
-    statusEl.textContent = "Error: " + e.message;
+    statusEl.textContent = "Error: " + (e.name === "TimeoutError" ? "request timed out" : e.message);
   } finally {
     searchBtn.disabled = false;
   }
