@@ -234,9 +234,10 @@ function render(order) {
       tile.appendChild(s);
     }
 
-    // Click -> our own hotel page with all that hotel's images
+    // Click -> our own hotel page. `ref` is the clicked image's row index in
+    // features_int8.npy; hotel.html uses it to sort by similarity to that image.
     const a = document.createElement("a");
-    a.href = `./hotel.html?id=${encodeURIComponent(m.hotel_id)}`;
+    a.href = `./hotel.html?id=${encodeURIComponent(m.hotel_id)}&ref=${idx}`;
     a.setAttribute("aria-label", `View all images for ${hotel.name}`);
     tile.appendChild(a);
 
