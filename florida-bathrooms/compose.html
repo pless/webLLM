@@ -1,0 +1,846 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Compositional Hotel Query — Florida Bathrooms</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<style>
+  :root {
+    --bg: #0f1115;
+    --panel: #171a21;
+    --text: #e6e6e6;
+    --muted: #8b94a3;
+    --accent: #6ea8ff;
+    --good: #5fbf81;
+    --warn: #d4a64a;
+    --border: #252a35;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background: var(--bg); color: var(--text);
+  }
+  header {
+    background: var(--panel); border-bottom: 1px solid var(--border);
+    padding: 12px 16px;
+  }
+  header h1 { font-size: 16px; margin: 0 0 4px 0; font-weight: 600; }
+  header .sub { color: var(--muted); font-size: 13px; }
+
+  /* Cue panel */
+  #cuePanel {
+    padding: 12px 16px; background: var(--panel);
+    border-bottom: 1px solid var(--border);
+    display: grid; grid-template-columns: 1fr 1fr; gap: 16px;
+  }
+  @media (max-width: 720px) { #cuePanel { grid-template-columns: 1fr; } }
+  .cue-col h2 {
+    font-size: 13px; font-weight: 600; color: var(--muted);
+    margin: 0 0 8px 0; text-transform: uppercase; letter-spacing: 0.04em;
+  }
+  .cue-row {
+    display: flex; gap: 8px; align-items: center; margin-bottom: 6px;
+    background: #0b0d12; border: 1px solid var(--border); border-radius: 6px;
+    padding: 6px;
+  }
+  .cue-row.active { border-color: var(--accent); }
+  .cue-row.empty { opacity: 0.55; }
+  .cue-row input[type="text"] {
+    flex: 1; min-width: 80px;
+    padding: 6px 8px; font-size: 13px;
+    background: transparent; color: var(--text);
+    border: 0; outline: none;
+  }
+  .cue-thumb {
+    width: 56px; height: 56px; flex-shrink: 0;
+    background: #1a1d25; border-radius: 4px; overflow: hidden;
+    display: flex; align-items: center; justify-content: center;
+    color: var(--muted); font-size: 11px; text-align: center;
+    cursor: default;
+  }
+  .cue-thumb img { width: 100%; height: 100%; object-fit: cover; }
+  .cue-thumb.target { outline: 2px dashed var(--accent); outline-offset: -2px; }
+  .threshold-ctl {
+    display: flex; flex-direction: column; align-items: center;
+    font-size: 11px; color: var(--muted); min-width: 92px;
+  }
+  .threshold-ctl input[type="range"] { width: 90px; margin: 2px 0 0 0; }
+  .threshold-ctl .val { font-variant-numeric: tabular-nums; color: var(--text); font-size: 12px; }
+  .cue-row button.x {
+    background: transparent; border: 0; color: var(--muted); cursor: pointer;
+    font-size: 16px; padding: 4px 6px; line-height: 1;
+  }
+  .cue-row button.x:hover { color: var(--text); }
+
+  #queryBar {
+    padding: 10px 16px; display: flex; gap: 12px; align-items: center;
+    background: var(--panel); border-bottom: 1px solid var(--border);
+  }
+  button.primary {
+    padding: 10px 16px; font-size: 14px; font-weight: 500;
+    background: var(--accent); color: #0b0d12; border: 0; border-radius: 6px;
+    cursor: pointer;
+  }
+  button.primary:disabled { opacity: 0.5; cursor: wait; }
+  button.secondary {
+    padding: 8px 12px; font-size: 13px;
+    background: transparent; color: var(--text); border: 1px solid var(--border); border-radius: 6px;
+    cursor: pointer;
+  }
+  #qStatus { font-size: 13px; color: var(--muted); flex: 1; }
+
+  /* Results */
+  #results { padding: 8px 16px; }
+  .hotel-card {
+    border: 1px solid var(--border); border-radius: 6px;
+    margin-bottom: 8px; padding: 8px 10px;
+    background: var(--panel);
+  }
+  .hotel-card .name {
+    font-weight: 600; font-size: 14px; margin-bottom: 4px;
+  }
+  .hotel-card .name a { color: var(--accent); text-decoration: none; }
+  .hotel-card .name a:hover { text-decoration: underline; }
+  .hotel-card .margin {
+    color: var(--muted); font-size: 11px; margin-left: 6px;
+    font-variant-numeric: tabular-nums;
+  }
+  .ev-grid {
+    display: grid; gap: 6px;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  }
+  .ev-tile {
+    position: relative; aspect-ratio: 1; background: #1a1d25; border-radius: 4px;
+    overflow: hidden;
+  }
+  .ev-tile img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .ev-cap {
+    position: absolute; bottom: 0; left: 0; right: 0;
+    background: linear-gradient(to top, rgba(0,0,0,0.85), rgba(0,0,0,0));
+    color: #fff; padding: 16px 6px 4px 6px;
+    font-size: 11px; line-height: 1.2;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Browse panel */
+  #browse {
+    border-top: 1px solid var(--border);
+    padding: 12px 16px; background: var(--panel);
+  }
+  #browse h2 {
+    font-size: 13px; font-weight: 600; color: var(--muted);
+    margin: 0 0 8px 0; text-transform: uppercase; letter-spacing: 0.04em;
+  }
+  #browseControls {
+    display: flex; gap: 8px; align-items: center; margin-bottom: 8px; flex-wrap: wrap;
+  }
+  #browseQuery {
+    flex: 1; min-width: 200px;
+    padding: 8px 10px; font-size: 13px;
+    background: #0b0d12; color: var(--text);
+    border: 1px solid var(--border); border-radius: 6px;
+  }
+  #browseGrid {
+    display: grid; gap: 4px;
+    grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  }
+  .browse-tile {
+    position: relative; aspect-ratio: 1; background: #1a1d25; overflow: hidden;
+    border-radius: 4px; cursor: pointer; border: 0; padding: 0;
+  }
+  .browse-tile img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .browse-tile:hover { outline: 2px solid var(--accent); outline-offset: -2px; }
+  .browse-tile .lbl {
+    position: absolute; top: 0; left: 0; right: 0;
+    background: linear-gradient(to bottom, rgba(0,0,0,0.7), rgba(0,0,0,0));
+    color: #fff; padding: 4px 6px;
+    font-size: 10px; line-height: 1.2;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    pointer-events: none;
+  }
+  .nav { font-size: 13px; }
+  .nav a { color: var(--muted); text-decoration: none; margin-right: 12px; }
+  .nav a:hover { color: var(--text); }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Compositional Hotel Query
+    <span style="color:var(--muted);font-weight:400;font-size:12px;margin-left:8px;">
+      (broad bathroom set — no mirror filter)
+    </span>
+  </h1>
+  <div class="sub">
+    Each cue is a feature you'd expect to see somewhere in this hotel's photos.
+    A hotel matches if every cue has at least one photo above its threshold —
+    the matching photos can be different photos. For image cues, either click a
+    tile in the browse panel below, or use the <strong>Upload</strong> button on
+    a cue row to encode your own image via the HF Space.
+    <span class="nav" style="margin-left:8px;"><a href="./">← back to flat search</a></span>
+  </div>
+</header>
+
+<div id="cuePanel">
+  <div class="cue-col">
+    <h2>Text cues</h2>
+    <div id="textCues"></div>
+  </div>
+  <div class="cue-col">
+    <h2>Image cues  <span style="color:var(--muted);font-weight:400;font-size:11px;text-transform:none;">— click a browse tile to fill the targeted slot</span></h2>
+    <div id="imageCues"></div>
+  </div>
+</div>
+
+<div id="queryBar">
+  <button id="runBtn" class="primary">Find Hotels</button>
+  <button id="resetBtn" class="secondary">Reset cues</button>
+  <span id="qStatus">Loading data…</span>
+</div>
+
+<div id="results"></div>
+
+<section id="browse">
+  <h2>Browse — find image cues</h2>
+  <div id="browseControls">
+    <input id="browseQuery" type="text" placeholder="text search to find a candidate cue image (e.g. &quot;chandelier&quot;, &quot;smart mirror&quot;)" />
+    <button id="browseSearchBtn" class="secondary">Search</button>
+    <button id="browseShuffleBtn" class="secondary">Shuffle</button>
+    <span id="browseStatus" style="color:var(--muted);font-size:12px;"></span>
+  </div>
+  <div id="browseGrid"></div>
+</section>
+
+<script>
+// ---------- config ----------
+const SPACE = "robertpless/clip-text-encoder";
+const SPACE_URL = `https://${SPACE.replace("/", "-")}.hf.space`;
+const ENCODE_URL = `${SPACE_URL}/gradio_api/call/encode`;
+const ENCODE_IMAGE_URL = `${SPACE_URL}/gradio_api/call/encode_image`;
+const ENCODE_TIMEOUT_MS = 60_000;
+const FEATURES_URL = "./features_int8.npy";
+const SCALE_URL = "./features_scale.json";
+const INDEX_URL = "./features_index.csv";
+const HOTELS_URL = "./hotels.json";
+const BROWSE_TOP = 200;
+const RESULT_TOP = 50;
+const MAX_TEXT_CUES = 3;
+const MAX_IMAGE_CUES = 3;
+const TEXT_DEFAULT_TAU = 0.22;
+const IMAGE_DEFAULT_TAU = 0.75;
+
+// ---------- npy loader (int8) ----------
+async function loadNpyInt8(url) {
+  const buf = new Uint8Array(await (await fetch(url)).arrayBuffer());
+  if (buf[0] !== 0x93 || String.fromCharCode(...buf.slice(1, 6)) !== "NUMPY")
+    throw new Error("not an .npy file");
+  const major = buf[6];
+  const headerLen = major === 1
+    ? new DataView(buf.buffer, 8, 2).getUint16(0, true)
+    : new DataView(buf.buffer, 8, 4).getUint32(0, true);
+  const headerStart = major === 1 ? 10 : 12;
+  const header = new TextDecoder().decode(buf.slice(headerStart, headerStart + headerLen));
+  const m = header.match(/\(\s*(\d+)\s*,\s*(\d+)\s*\)/);
+  const n = +m[1], d = +m[2];
+  const byteStart = buf.byteOffset + headerStart + headerLen;
+  const data = new Int8Array(buf.buffer.slice(byteStart, byteStart + n * d));
+  return { data, N: n, D: d };
+}
+
+// ---------- minimal CSV parser ----------
+function parseCSV(text) {
+  const rows = []; let i = 0, field = "", row = [], inQ = false;
+  while (i < text.length) {
+    const c = text[i];
+    if (inQ) {
+      if (c === '"' && text[i+1] === '"') { field += '"'; i += 2; continue; }
+      if (c === '"') { inQ = false; i++; continue; }
+      field += c; i++;
+    } else {
+      if (c === '"') { inQ = true; i++; continue; }
+      if (c === ",") { row.push(field); field = ""; i++; continue; }
+      if (c === "\n") { row.push(field); rows.push(row); field = ""; row = []; i++; continue; }
+      if (c === "\r") { i++; continue; }
+      field += c; i++;
+    }
+  }
+  if (field.length || row.length) { row.push(field); rows.push(row); }
+  const header = rows.shift();
+  return rows.filter(r => r.length === header.length)
+             .map(r => Object.fromEntries(header.map((h, j) => [h, r[j]])));
+}
+
+// ---------- Gradio call helpers (text + image) ----------
+async function gradioSseResult(streamUrl, signal) {
+  const stream = await fetch(streamUrl, { signal });
+  if (!stream.ok) throw new Error(`stream ${stream.status}`);
+  const body = await stream.text();
+  let event = null;
+  for (const line of body.split("\n")) {
+    if (line.startsWith("event:")) event = line.slice(6).trim();
+    else if (line.startsWith("data:")) {
+      if (event === "complete") {
+        const parsed = JSON.parse(line.slice(5).trim());
+        return Array.isArray(parsed) ? parsed[0] : parsed;
+      }
+      if (event === "error") throw new Error(`encoder error: ${line.slice(5).trim()}`);
+    }
+  }
+  throw new Error("no complete event in stream");
+}
+
+async function encodeText(text) {
+  const signal = AbortSignal.timeout(ENCODE_TIMEOUT_MS);
+  const post = await fetch(ENCODE_URL, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ data: [text] }), signal,
+  });
+  if (!post.ok) throw new Error(`encode POST ${post.status}`);
+  const { event_id } = await post.json();
+  if (!event_id) throw new Error("no event_id");
+  return gradioSseResult(`${ENCODE_URL}/${event_id}`, signal);
+}
+
+// Upload a Blob/File to the HF Space, then call /encode_image with the
+// resulting FileData reference. Returns {embedding, dim, ...}.
+async function encodeImageFile(file) {
+  const signal = AbortSignal.timeout(ENCODE_TIMEOUT_MS);
+  // 1) Upload the file. Gradio's /upload returns ["/tmp/gradio/<hash>/<name>"].
+  const fd = new FormData();
+  const orig = file.name || "image.jpg";
+  fd.append("files", file, orig);
+  const uploadId = (crypto.randomUUID && crypto.randomUUID()) || String(Math.random()).slice(2);
+  const upRes = await fetch(`${SPACE_URL}/gradio_api/upload?upload_id=${uploadId}`, {
+    method: "POST", body: fd, signal,
+  });
+  if (!upRes.ok) throw new Error(`upload ${upRes.status}`);
+  const paths = await upRes.json();
+  if (!Array.isArray(paths) || !paths[0]) throw new Error("upload returned no path");
+  const path = paths[0];
+
+  // 2) Call /encode_image with a FileData payload pointing at the uploaded file.
+  const callRes = await fetch(`${ENCODE_IMAGE_URL}`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      data: [{
+        path,
+        url: `${SPACE_URL}/gradio_api/file=${path}`,
+        orig_name: orig,
+        size: file.size,
+        mime_type: file.type || "image/jpeg",
+        meta: { _type: "gradio.FileData" },
+      }],
+    }),
+    signal,
+  });
+  if (!callRes.ok) throw new Error(`encode_image POST ${callRes.status}`);
+  const { event_id } = await callRes.json();
+  if (!event_id) throw new Error("no event_id from /encode_image");
+  return gradioSseResult(`${ENCODE_IMAGE_URL}/${event_id}`, signal);
+}
+
+// ---------- module state ----------
+let features = null;       // Int8Array of N*D
+let scale = 1;             // dequant
+let N = 0, D = 0;
+let meta = [];             // [{id, hotel_id, path}]
+let hotels = {};           // {hotel_id: {name, gpid, lat, lng}}
+let hotelToRows = new Map(); // hotel_id (string) -> [row_idx,...]
+
+// Cue state
+let textCues = [];   // [{id, text, embedding, threshold, scores}]
+let imageCues = [];  // [{id, rowIdx, threshold, scores}]
+let pendingImageSlot = null; // id of image cue waiting for a click
+let nextCueId = 1;
+
+// ---------- helpers ----------
+function dequantizeRow(idx) {
+  const out = new Float32Array(D);
+  const base = idx * D;
+  for (let k = 0; k < D; k++) out[k] = features[base + k] * scale;
+  return out;
+}
+// Score a (already-dequantized) float query vector against all rows.
+// Result is cosine similarity (since features and qVec are both L2-normalized).
+function scoreAll(qVec) {
+  const scores = new Float32Array(N);
+  for (let i = 0; i < N; i++) {
+    let s = 0;
+    const base = i * D;
+    for (let k = 0; k < D; k++) s += features[base + k] * qVec[k];
+    scores[i] = s * scale;
+  }
+  return scores;
+}
+function hotelMaxForCue(scores) {
+  // Map<hotel_id, {score, row}>
+  const out = new Map();
+  for (const [hid, rows] of hotelToRows) {
+    let best = -Infinity, bestRow = -1;
+    for (const i of rows) if (scores[i] > best) { best = scores[i]; bestRow = i; }
+    out.set(hid, { score: best, row: bestRow });
+  }
+  return out;
+}
+
+// ---------- cue rendering ----------
+const textCuesEl = document.getElementById("textCues");
+const imageCuesEl = document.getElementById("imageCues");
+
+function renderTextCues() {
+  textCuesEl.innerHTML = "";
+  for (const c of textCues) {
+    const div = document.createElement("div");
+    div.className = "cue-row" + (c.text.trim() ? " active" : " empty");
+    div.innerHTML = `
+      <span style="color:var(--muted);font-size:11px;width:14px;">T${c.id}</span>
+      <input type="text" placeholder="e.g., 'wood sliding barn door', 'Nespresso machine'" />
+      <div class="threshold-ctl">
+        <span class="val">${c.threshold.toFixed(3)}</span>
+        <input type="range" min="0.10" max="0.40" step="0.005" />
+      </div>
+      <button class="x" title="Remove">×</button>
+    `;
+    const [textInput] = div.querySelectorAll("input[type=text]");
+    const [valEl] = div.querySelectorAll(".val");
+    const [rangeEl] = div.querySelectorAll("input[type=range]");
+    const [xBtn] = div.querySelectorAll("button.x");
+    textInput.value = c.text;
+    rangeEl.value = c.threshold;
+    textInput.addEventListener("input", e => {
+      c.text = e.target.value;
+      // invalidate cached encode if text changed
+      c.embedding = null; c.scores = null;
+      div.classList.toggle("active", c.text.trim().length > 0);
+      div.classList.toggle("empty",  c.text.trim().length === 0);
+    });
+    rangeEl.addEventListener("input", e => {
+      c.threshold = parseFloat(e.target.value);
+      valEl.textContent = c.threshold.toFixed(3);
+      // re-aggregate without re-scoring
+      if (lastResults) renderResults();
+    });
+    xBtn.addEventListener("click", () => {
+      textCues = textCues.filter(x => x !== c);
+      renderTextCues(); ensureSlot("text");
+    });
+    textCuesEl.appendChild(div);
+  }
+  // render an "+ add" button if under cap
+  if (textCues.length < MAX_TEXT_CUES) {
+    const add = document.createElement("button");
+    add.className = "secondary";
+    add.textContent = "+ Add text cue";
+    add.addEventListener("click", () => {
+      textCues.push({ id: nextCueId++, text: "", embedding: null, threshold: TEXT_DEFAULT_TAU, scores: null });
+      renderTextCues();
+    });
+    textCuesEl.appendChild(add);
+  }
+}
+
+function imageCueLabel(c) {
+  if (c.rowIdx != null) {
+    const m = meta[c.rowIdx];
+    const h = hotels[m.hotel_id] || { name: `Hotel ${m.hotel_id}` };
+    return `image #${m.id} — hotel: <a href="hotel.html?id=${encodeURIComponent(m.hotel_id)}" style="color:var(--accent);">${escapeHtml(h.name)}</a>`;
+  }
+  if (c.uploadedThumb) {
+    return `<span style="color:var(--good)">uploaded</span> ${escapeHtml(c.uploadedName || "image")}`;
+  }
+  return null;
+}
+
+function imageCueThumbSrc(c) {
+  if (c.rowIdx != null) return meta[c.rowIdx].path;
+  if (c.uploadedThumb) return c.uploadedThumb;
+  return null;
+}
+
+function renderImageCues() {
+  imageCuesEl.innerHTML = "";
+  for (const c of imageCues) {
+    const div = document.createElement("div");
+    const thumbSrc = imageCueThumbSrc(c);
+    const filled = thumbSrc != null;
+    const uploading = c.uploading;
+    div.className = "cue-row" + (filled ? " active" : " empty");
+    const isTarget = pendingImageSlot === c.id && !filled;
+    const thumbInner = uploading
+      ? `<span style="color:var(--warn);font-size:10px;">uploading…</span>`
+      : filled
+        ? `<img src="${thumbSrc}" alt="" />`
+        : (isTarget ? `click<br>a tile<br>below` : `(empty)`);
+    const labelHTML = filled
+      ? imageCueLabel(c)
+      : (uploading ? '<span style="color:var(--warn)">encoding upload…</span>'
+          : isTarget ? '<span style="color:var(--accent)">awaiting selection — click a tile, or drop/upload a file →</span>'
+          : 'no image selected');
+    div.innerHTML = `
+      <span style="color:var(--muted);font-size:11px;width:14px;">I${c.id}</span>
+      <div class="cue-thumb${isTarget ? " target" : ""}">${thumbInner}</div>
+      <div style="flex:1;color:var(--muted);font-size:12px;">${labelHTML}</div>
+      <button class="secondary" data-up style="font-size:11px;padding:4px 8px;">Upload</button>
+      <input type="file" accept="image/*" style="display:none" />
+      <div class="threshold-ctl">
+        <span class="val">${c.threshold.toFixed(3)}</span>
+        <input type="range" min="0.40" max="0.95" step="0.005" />
+      </div>
+      <button class="x" title="Remove">×</button>
+    `;
+    const valEl = div.querySelector(".val");
+    const rangeEl = div.querySelector("input[type=range]");
+    const xBtn = div.querySelector("button.x");
+    const upBtn = div.querySelector("button[data-up]");
+    const fileInput = div.querySelector('input[type=file]');
+    rangeEl.value = c.threshold;
+    rangeEl.addEventListener("input", e => {
+      c.threshold = parseFloat(e.target.value);
+      valEl.textContent = c.threshold.toFixed(3);
+      if (lastResults) renderResults();
+    });
+    xBtn.addEventListener("click", () => {
+      imageCues = imageCues.filter(x => x !== c);
+      if (pendingImageSlot === c.id) pendingImageSlot = null;
+      renderImageCues(); ensureSlot("image");
+    });
+    // Upload button -> open file picker -> upload + encode -> fill slot
+    upBtn.addEventListener("click", () => fileInput.click());
+    fileInput.addEventListener("change", async (e) => {
+      const file = e.target.files && e.target.files[0];
+      if (!file) return;
+      // Show local thumbnail immediately
+      const reader = new FileReader();
+      reader.onload = () => {
+        c.uploadedThumb = reader.result;
+        c.uploadedName = file.name;
+        c.uploading = true;
+        c.rowIdx = null; // upload supersedes any previously chosen tile
+        c.scores = null;
+        c.uploadedEmbedding = null;
+        renderImageCues();
+      };
+      reader.readAsDataURL(file);
+      // Encode via HF Space
+      try {
+        const payload = await encodeImageFile(file);
+        if (!payload || !payload.embedding) throw new Error("no embedding returned");
+        c.uploadedEmbedding = new Float32Array(payload.embedding);
+        c.uploading = false;
+        c.scores = null;
+        renderImageCues();
+      } catch (err) {
+        console.error("upload encode failed", err);
+        c.uploading = false;
+        c.uploadedThumb = null; c.uploadedName = null; c.uploadedEmbedding = null;
+        renderImageCues();
+        qStatus.textContent = "Image upload failed: " + err.message;
+      }
+    });
+    // Click empty thumb -> mark this slot as click-target for browse panel
+    const thumb = div.querySelector(".cue-thumb");
+    if (!filled) {
+      thumb.style.cursor = "pointer";
+      thumb.addEventListener("click", () => {
+        pendingImageSlot = c.id;
+        renderImageCues();
+      });
+    } else {
+      thumb.style.cursor = "pointer";
+      thumb.title = "Click to clear this cue";
+      thumb.addEventListener("click", () => {
+        c.rowIdx = null; c.scores = null;
+        c.uploadedThumb = null; c.uploadedName = null; c.uploadedEmbedding = null;
+        pendingImageSlot = c.id;
+        renderImageCues();
+      });
+    }
+    imageCuesEl.appendChild(div);
+  }
+  if (imageCues.length < MAX_IMAGE_CUES) {
+    const add = document.createElement("button");
+    add.className = "secondary";
+    add.textContent = "+ Add image cue";
+    add.addEventListener("click", () => {
+      imageCues.push({ id: nextCueId++, rowIdx: null, threshold: IMAGE_DEFAULT_TAU, scores: null });
+      renderImageCues();
+    });
+    imageCuesEl.appendChild(add);
+  }
+}
+
+function ensureSlot(kind) {
+  // Always keep at least one empty slot visible (UX nicety) — handled by renderXCues "+ add" button.
+  if (kind === "text") renderTextCues();
+  else renderImageCues();
+}
+
+function escapeHtml(s) {
+  return String(s ?? "").replace(/[&<>"']/g, c => ({
+    "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"
+  }[c]));
+}
+
+// Click handler from browse-tile fills the targeted image cue.
+function assignImageToTargetSlot(rowIdx) {
+  let target = imageCues.find(c => c.id === pendingImageSlot);
+  if (!target) target = imageCues.find(c => c.rowIdx == null);
+  if (!target) {
+    if (imageCues.length < MAX_IMAGE_CUES) {
+      target = { id: nextCueId++, rowIdx: null, threshold: IMAGE_DEFAULT_TAU, scores: null };
+      imageCues.push(target);
+    } else {
+      // No room and nothing targeted — replace last
+      target = imageCues[imageCues.length - 1];
+    }
+  }
+  target.rowIdx = rowIdx;
+  target.scores = null; // invalidate cached cue
+  target.uploadedThumb = null;
+  target.uploadedName = null;
+  target.uploadedEmbedding = null;
+  target.uploading = false;
+  pendingImageSlot = null;
+  renderImageCues();
+}
+
+// ---------- query execution ----------
+let lastResults = null;       // {cues: [{label, kind, refRow?}], cueHotelMax: [Map], orderedHotels: [...]}
+const runBtn = document.getElementById("runBtn");
+const resetBtn = document.getElementById("resetBtn");
+const qStatus = document.getElementById("qStatus");
+const resultsEl = document.getElementById("results");
+
+async function runQuery() {
+  runBtn.disabled = true;
+  qStatus.textContent = "Encoding cues…";
+  try {
+    // Encode missing text cues
+    for (const c of textCues) {
+      const t = c.text.trim();
+      if (!t) continue;
+      if (!c.embedding) {
+        const payload = await encodeText(t);
+        c.embedding = payload.embedding;
+        if (!c.embedding || c.embedding.length !== D) throw new Error(`bad embedding dim`);
+        c.scores = null;
+      }
+      if (!c.scores) c.scores = scoreAll(c.embedding);
+    }
+    // Build image cue scores. An image cue is either:
+    //   - a row in the dataset (c.rowIdx set) -> dequantize that row's int8 features
+    //   - an uploaded image (c.uploadedEmbedding set) -> use the HF Space encoding directly
+    for (const c of imageCues) {
+      if (c.scores) continue;
+      let qVec = null;
+      if (c.rowIdx != null) qVec = dequantizeRow(c.rowIdx);
+      else if (c.uploadedEmbedding) qVec = c.uploadedEmbedding;
+      if (!qVec) continue;
+      c.scores = scoreAll(qVec);
+    }
+
+    // Build active-cue list in display order: text first, then image
+    const cues = [];
+    for (const c of textCues) {
+      if (c.text.trim() && c.scores) {
+        cues.push({ kind: "text", label: `T${c.id}: "${c.text}"`, threshold: () => c.threshold, scores: c.scores });
+      }
+    }
+    for (const c of imageCues) {
+      if (!c.scores) continue;
+      let label;
+      if (c.rowIdx != null) label = `I${c.id}: image #${meta[c.rowIdx].id}`;
+      else if (c.uploadedEmbedding) label = `I${c.id}: uploaded ${c.uploadedName || "image"}`;
+      else continue;
+      cues.push({ kind: "image", label, threshold: () => c.threshold, scores: c.scores, refRow: c.rowIdx ?? null });
+    }
+    if (!cues.length) {
+      qStatus.textContent = "Add at least one cue (text or image).";
+      lastResults = null; resultsEl.innerHTML = "";
+      runBtn.disabled = false; return;
+    }
+
+    qStatus.textContent = "Aggregating per-hotel maxima…";
+    const cueHotelMax = cues.map(c => hotelMaxForCue(c.scores));
+
+    lastResults = { cues, cueHotelMax };
+    renderResults();
+    qStatus.textContent = `Scored ${cues.length} cue${cues.length>1?"s":""} across ${N.toLocaleString()} images / ${hotelToRows.size.toLocaleString()} hotels.`;
+  } catch (e) {
+    console.error(e);
+    qStatus.textContent = "Error: " + e.message;
+  } finally {
+    runBtn.disabled = false;
+  }
+}
+
+function renderResults() {
+  if (!lastResults) { resultsEl.innerHTML = ""; return; }
+  const { cues, cueHotelMax } = lastResults;
+  // AND combine with current thresholds
+  const matches = [];
+  for (const hid of hotelToRows.keys()) {
+    const evidence = [];
+    let pass = true, margin = 0;
+    for (let c = 0; c < cues.length; c++) {
+      const r = cueHotelMax[c].get(hid);
+      const tau = cues[c].threshold();
+      if (!r || r.score < tau) { pass = false; break; }
+      evidence.push({ cueIdx: c, score: r.score, row: r.row });
+      margin += r.score - tau;
+    }
+    if (pass) matches.push({ hid, evidence, margin });
+  }
+  matches.sort((a, b) => b.margin - a.margin);
+
+  // Header: how many hotels match
+  const head = document.createElement("div");
+  head.style.cssText = "padding:8px 0;color:var(--muted);font-size:13px;";
+  head.innerHTML = `
+    <strong style="color:var(--text)">${matches.length.toLocaleString()}</strong>
+    hotel${matches.length===1?"":"s"} match all ${cues.length} cue${cues.length>1?"s":""}
+    ${matches.length > RESULT_TOP ? `(showing top ${RESULT_TOP} by total margin above thresholds)` : ""}
+  `;
+  resultsEl.innerHTML = "";
+  resultsEl.appendChild(head);
+
+  for (const m of matches.slice(0, RESULT_TOP)) {
+    const h = hotels[m.hid] || { name: `Hotel ${m.hid}` };
+    const card = document.createElement("div");
+    card.className = "hotel-card";
+    const name = document.createElement("div");
+    name.className = "name";
+    name.innerHTML = `
+      <a href="hotel.html?id=${encodeURIComponent(m.hid)}">${escapeHtml(h.name)}</a>
+      <span class="margin">total margin: +${m.margin.toFixed(3)}</span>
+    `;
+    card.appendChild(name);
+    const ev = document.createElement("div");
+    ev.className = "ev-grid";
+    for (const e of m.evidence) {
+      const tile = document.createElement("a");
+      tile.className = "ev-tile";
+      tile.href = `hotel.html?id=${encodeURIComponent(meta[e.row].hotel_id)}&ref=${e.row}`;
+      const img = document.createElement("img");
+      img.loading = "lazy"; img.src = meta[e.row].path;
+      tile.appendChild(img);
+      const cap = document.createElement("div");
+      cap.className = "ev-cap";
+      cap.innerHTML = `${escapeHtml(cues[e.cueIdx].label)}<br>sim = ${e.score.toFixed(3)} (τ=${cues[e.cueIdx].threshold().toFixed(3)})`;
+      tile.appendChild(cap);
+      ev.appendChild(tile);
+    }
+    card.appendChild(ev);
+    resultsEl.appendChild(card);
+  }
+}
+
+// ---------- browse panel ----------
+const browseGridEl = document.getElementById("browseGrid");
+const browseQueryEl = document.getElementById("browseQuery");
+const browseSearchBtn = document.getElementById("browseSearchBtn");
+const browseShuffleBtn = document.getElementById("browseShuffleBtn");
+const browseStatusEl = document.getElementById("browseStatus");
+
+function renderBrowse(order) {
+  browseGridEl.innerHTML = "";
+  const slice = order.slice(0, BROWSE_TOP);
+  const frag = document.createDocumentFragment();
+  for (const { idx, score } of slice) {
+    const m = meta[idx];
+    const h = hotels[m.hotel_id] || { name: `Hotel ${m.hotel_id}` };
+    const btn = document.createElement("button");
+    btn.className = "browse-tile";
+    btn.title = `${h.name}\nClick to use as image cue`;
+    const img = document.createElement("img");
+    img.loading = "lazy"; img.src = m.path;
+    btn.appendChild(img);
+    const lbl = document.createElement("div");
+    lbl.className = "lbl";
+    lbl.textContent = (score !== undefined ? score.toFixed(3) + " · " : "") + h.name;
+    btn.appendChild(lbl);
+    btn.addEventListener("click", () => assignImageToTargetSlot(idx));
+    frag.appendChild(btn);
+  }
+  browseGridEl.appendChild(frag);
+}
+function browseShuffle() {
+  const order = meta.map((_, i) => ({ idx: i }));
+  for (let i = order.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [order[i], order[j]] = [order[j], order[i]];
+  }
+  renderBrowse(order);
+  browseStatusEl.textContent = `random sample of ${N.toLocaleString()} images`;
+}
+async function browseSearch() {
+  const t = browseQueryEl.value.trim();
+  if (!t) { browseShuffle(); return; }
+  browseStatusEl.textContent = "encoding…";
+  try {
+    const payload = await encodeText(t);
+    const q = payload.embedding;
+    if (!q || q.length !== D) throw new Error("bad embedding");
+    const scores = scoreAll(new Float32Array(q));
+    const order = Array.from({ length: N }, (_, i) => ({ idx: i, score: scores[i] }));
+    order.sort((a, b) => b.score - a.score);
+    renderBrowse(order);
+    browseStatusEl.textContent = `top ${BROWSE_TOP} for "${t}"`;
+  } catch (e) {
+    browseStatusEl.textContent = "error: " + e.message;
+  }
+}
+browseSearchBtn.addEventListener("click", browseSearch);
+browseShuffleBtn.addEventListener("click", browseShuffle);
+browseQueryEl.addEventListener("keydown", e => { if (e.key === "Enter") browseSearch(); });
+
+// ---------- main wiring ----------
+runBtn.addEventListener("click", runQuery);
+resetBtn.addEventListener("click", () => {
+  textCues = []; imageCues = []; pendingImageSlot = null;
+  lastResults = null; resultsEl.innerHTML = "";
+  // seed one of each
+  textCues.push({ id: nextCueId++, text: "", embedding: null, threshold: TEXT_DEFAULT_TAU, scores: null });
+  imageCues.push({ id: nextCueId++, rowIdx: null, threshold: IMAGE_DEFAULT_TAU, scores: null });
+  renderTextCues(); renderImageCues();
+  qStatus.textContent = "Cues reset.";
+});
+
+// ---------- init ----------
+(async () => {
+  try {
+    const [npy, scaleJson, csvText, hotelsJson] = await Promise.all([
+      loadNpyInt8(FEATURES_URL),
+      fetch(SCALE_URL).then(r => r.json()),
+      fetch(INDEX_URL).then(r => r.text()),
+      fetch(HOTELS_URL).then(r => r.json()),
+    ]);
+    features = npy.data; N = npy.N; D = npy.D;
+    scale = scaleJson.scale;
+    hotels = hotelsJson;
+    meta = parseCSV(csvText);
+    if (meta.length !== N) console.warn(`row mismatch: features N=${N}, csv rows=${meta.length}`);
+
+    // Build hotel -> rows index. Note: feature_index.csv hotel_id is a string; hotels.json keys are also strings.
+    for (let i = 0; i < meta.length; i++) {
+      const hid = meta[i].hotel_id;
+      let arr = hotelToRows.get(hid);
+      if (!arr) { arr = []; hotelToRows.set(hid, arr); }
+      arr.push(i);
+    }
+
+    qStatus.textContent = `Loaded ${N.toLocaleString()} images across ${hotelToRows.size.toLocaleString()} hotels (dim=${D}). Add cues to start.`;
+
+    // Seed one empty cue of each kind so the UI is non-empty
+    textCues.push({ id: nextCueId++, text: "", embedding: null, threshold: TEXT_DEFAULT_TAU, scores: null });
+    imageCues.push({ id: nextCueId++, rowIdx: null, threshold: IMAGE_DEFAULT_TAU, scores: null });
+    renderTextCues(); renderImageCues();
+    browseShuffle();
+  } catch (e) {
+    console.error(e);
+    qStatus.textContent = "Failed to load data: " + e.message;
+  }
+})();
+</script>
+</body>
+</html>
