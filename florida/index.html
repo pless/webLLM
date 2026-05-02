@@ -24,6 +24,10 @@
     padding: 12px 16px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap;
   }
   header h1 { font-size: 16px; margin: 0; font-weight: 600; }
+  header .row {
+    display: flex; gap: 12px; align-items: center; flex-wrap: wrap;
+    width: 100%;
+  }
   #query {
     flex: 1; min-width: 240px;
     padding: 10px 12px; font-size: 15px;
@@ -31,6 +35,21 @@
     border: 1px solid var(--border); border-radius: 6px;
   }
   #query:focus { outline: 2px solid var(--accent); border-color: var(--accent); }
+  #nameFilter {
+    min-width: 180px;
+    padding: 8px 10px; font-size: 13px;
+    background: #0b0d12; color: var(--text);
+    border: 1px solid var(--border); border-radius: 6px;
+  }
+  #nameFilter:focus { outline: 2px solid var(--accent); border-color: var(--accent); }
+  label.checkbox {
+    display: flex; align-items: center; gap: 6px;
+    color: var(--muted); font-size: 13px; cursor: pointer;
+    padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px;
+    user-select: none;
+  }
+  label.checkbox input { margin: 0; cursor: pointer; }
+  label.checkbox.active { color: var(--text); border-color: var(--accent); }
   button {
     padding: 10px 16px; font-size: 14px; font-weight: 500;
     background: var(--accent); color: #0b0d12; border: 0; border-radius: 6px;
@@ -77,11 +96,20 @@
 <body>
 
 <header>
-  <h1>Florida Hotel Bathrooms</h1>
-  <input id="query" type="text" placeholder="e.g. &quot;bathroom with walk-in shower&quot;, &quot;round mirror over sink&quot;" />
-  <button id="searchBtn">Search</button>
-  <button id="shuffleBtn" class="secondary">Shuffle</button>
-  <span id="status">Loading…</span>
+  <div class="row">
+    <h1>Florida Hotel Bathrooms</h1>
+    <input id="query" type="text" placeholder="e.g. &quot;bathroom with walk-in shower&quot;, &quot;round mirror over sink&quot;" />
+    <button id="searchBtn">Search</button>
+    <button id="shuffleBtn" class="secondary">Shuffle</button>
+  </div>
+  <div class="row">
+    <input id="nameFilter" type="text" placeholder="Hotel name contains… (e.g. Marriott)" />
+    <label class="checkbox" id="fmLabel">
+      <input id="fmFilter" type="checkbox" />
+      Within 10 mi of Fort Myers
+    </label>
+    <span id="status">Loading…</span>
+  </div>
 </header>
 
 <div id="grid"></div>
@@ -104,12 +132,44 @@ const gridEl = document.getElementById("grid");
 const queryEl = document.getElementById("query");
 const searchBtn = document.getElementById("searchBtn");
 const shuffleBtn = document.getElementById("shuffleBtn");
+const nameFilterEl = document.getElementById("nameFilter");
+const fmFilterEl = document.getElementById("fmFilter");
+const fmLabelEl = document.getElementById("fmLabel");
 
 let features = null;   // Int8Array of N*D (quantized)
 let scale = 1.0;       // dequant: float = int8 * scale
 let N = 0, D = 0;
 let meta = [];         // array of {id, hotel_id, path, local_file}
-let hotels = {};       // {hotel_id: {name, gpid}}
+let hotels = {};       // {hotel_id: {name, gpid, lat, lng}}
+let lastOrder = null;  // full sorted order before filtering, for re-render
+let lastQueryLabel = ""; // status-bar context for the current order
+
+// Fort Myers, FL center
+const FM_LAT = 26.6406, FM_LNG = -81.8723;
+const FM_RADIUS_MI = 10;
+const MILES_PER_DEG_LAT = 69;
+const MILES_PER_DEG_LNG_AT_FM = 69 * Math.cos(FM_LAT * Math.PI / 180);
+
+function withinFortMyers(h) {
+  if (!h || h.lat == null || h.lng == null) return false;
+  const dLat = (h.lat - FM_LAT) * MILES_PER_DEG_LAT;
+  const dLng = (h.lng - FM_LNG) * MILES_PER_DEG_LNG_AT_FM;
+  return Math.hypot(dLat, dLng) <= FM_RADIUS_MI;
+}
+
+function passesFilters(idx) {
+  const m = meta[idx];
+  const h = hotels[m.hotel_id];
+  const nameQ = nameFilterEl.value.trim().toLowerCase();
+  if (nameQ) {
+    const name = (h?.name || "").toLowerCase();
+    if (!name.includes(nameQ)) return false;
+  }
+  if (fmFilterEl.checked) {
+    if (!withinFortMyers(h)) return false;
+  }
+  return true;
+}
 
 // ---------- npy loader (supports int8 and float32) ----------
 async function loadNpy(url) {
@@ -205,9 +265,20 @@ async function encodeText(text) {
 
 // ---------- render ----------
 function render(order) {
+  lastOrder = order;
   gridEl.innerHTML = "";
-  const slice = order.slice(0, MAX_TILES);
+  // Apply filters BEFORE slicing so MAX_TILES counts filtered hits.
+  const filtered = order.filter(o => passesFilters(o.idx));
+  const slice = filtered.slice(0, MAX_TILES);
   const frag = document.createDocumentFragment();
+  // Update status with filtered count
+  fmLabelEl.classList.toggle("active", fmFilterEl.checked);
+  if (lastQueryLabel) {
+    statusEl.textContent =
+      `Showing ${slice.length} of ${filtered.length} matches` +
+      (filtered.length !== order.length ? ` (filtered from ${order.length})` : "") +
+      ` — ${lastQueryLabel}`;
+  }
   for (const { idx, score } of slice) {
     const m = meta[idx];
     const hotel = hotels[m.hotel_id] || { name: `Hotel ${m.hotel_id}`, gpid: null };
@@ -252,6 +323,7 @@ function shuffle() {
     const j = Math.floor(Math.random() * (i + 1));
     [order[i], order[j]] = [order[j], order[i]];
   }
+  lastQueryLabel = `random sample of ${N} images`;
   render(order);
 }
 
@@ -296,9 +368,9 @@ async function search(text) {
   // the stashed order directly — no HF round-trip, no scoring loop.
   const cached = readCachedOrder(text);
   if (cached) {
+    lastQueryLabel = `query: "${text}" (cached)`;
     render(cached);
     setUrlQuery(text);
-    statusEl.textContent = `Top ${Math.min(MAX_TILES, N)} of ${N} images for: "${text}" (cached)`;
     searchBtn.disabled = false;
     return;
   }
@@ -323,10 +395,10 @@ async function search(text) {
     }
     const order = Array.from({ length: N }, (_, i) => ({ idx: i, score: scores[i] }));
     order.sort((a, b) => b.score - a.score);
+    lastQueryLabel = `query: "${text}"`;
     render(order);
     writeCachedOrder(text, order);
     setUrlQuery(text);
-    statusEl.textContent = `Top ${Math.min(MAX_TILES, N)} of ${N} images for: "${text}"`;
   } catch (e) {
     console.error(e);
     statusEl.textContent = "Error: " + (e.name === "TimeoutError" ? "request timed out" : e.message);
@@ -377,6 +449,14 @@ shuffleBtn.addEventListener("click", () => {
   setUrlQuery("");
   shuffle();
 });
+
+// Filter changes: re-render the existing order, no re-encoding needed.
+let nameFilterTimer = null;
+nameFilterEl.addEventListener("input", () => {
+  clearTimeout(nameFilterTimer);
+  nameFilterTimer = setTimeout(() => { if (lastOrder) render(lastOrder); }, 120);
+});
+fmFilterEl.addEventListener("change", () => { if (lastOrder) render(lastOrder); });
 </script>
 </body>
 </html>
