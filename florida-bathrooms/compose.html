@@ -122,42 +122,6 @@
     font-variant-numeric: tabular-nums;
   }
 
-  /* Browse panel */
-  #browse {
-    border-top: 1px solid var(--border);
-    padding: 12px 16px; background: var(--panel);
-  }
-  #browse h2 {
-    font-size: 13px; font-weight: 600; color: var(--muted);
-    margin: 0 0 8px 0; text-transform: uppercase; letter-spacing: 0.04em;
-  }
-  #browseControls {
-    display: flex; gap: 8px; align-items: center; margin-bottom: 8px; flex-wrap: wrap;
-  }
-  #browseQuery {
-    flex: 1; min-width: 200px;
-    padding: 8px 10px; font-size: 13px;
-    background: #0b0d12; color: var(--text);
-    border: 1px solid var(--border); border-radius: 6px;
-  }
-  #browseGrid {
-    display: grid; gap: 4px;
-    grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
-  }
-  .browse-tile {
-    position: relative; aspect-ratio: 1; background: #1a1d25; overflow: hidden;
-    border-radius: 4px; cursor: pointer; border: 0; padding: 0;
-  }
-  .browse-tile img { width: 100%; height: 100%; object-fit: cover; display: block; }
-  .browse-tile:hover { outline: 2px solid var(--accent); outline-offset: -2px; }
-  .browse-tile .lbl {
-    position: absolute; top: 0; left: 0; right: 0;
-    background: linear-gradient(to bottom, rgba(0,0,0,0.7), rgba(0,0,0,0));
-    color: #fff; padding: 4px 6px;
-    font-size: 10px; line-height: 1.2;
-    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-    pointer-events: none;
-  }
   .nav { font-size: 13px; }
   .nav a { color: var(--muted); text-decoration: none; margin-right: 12px; }
   .nav a:hover { color: var(--text); }
@@ -174,9 +138,9 @@
   <div class="sub">
     Each cue is a feature you'd expect to see somewhere in this hotel's photos.
     A hotel matches if every cue has at least one photo above its threshold —
-    the matching photos can be different photos. For image cues, either click a
-    tile in the browse panel below, or use the <strong>Upload</strong> button on
-    a cue row to encode your own image via the HF Space.
+    the matching photos can be different photos. Add as many text cues
+    (encoded via HF Space) and image cues (uploaded and encoded via HF Space) as
+    you like; tune each threshold independently.
     <span class="nav" style="margin-left:8px;"><a href="./">← back to flat search</a></span>
   </div>
 </header>
@@ -200,17 +164,6 @@
 
 <div id="results"></div>
 
-<section id="browse">
-  <h2>Browse — find image cues</h2>
-  <div id="browseControls">
-    <input id="browseQuery" type="text" placeholder="text search to find a candidate cue image (e.g. &quot;chandelier&quot;, &quot;smart mirror&quot;)" />
-    <button id="browseSearchBtn" class="secondary">Search</button>
-    <button id="browseShuffleBtn" class="secondary">Shuffle</button>
-    <span id="browseStatus" style="color:var(--muted);font-size:12px;"></span>
-  </div>
-  <div id="browseGrid"></div>
-</section>
-
 <script>
 // ---------- config ----------
 const SPACE = "robertpless/clip-text-encoder";
@@ -222,10 +175,7 @@ const FEATURES_URL = "./features_int8.npy";
 const SCALE_URL = "./features_scale.json";
 const INDEX_URL = "./features_index.csv";
 const HOTELS_URL = "./hotels.json";
-const BROWSE_TOP = 200;
 const RESULT_TOP = 50;
-const MAX_TEXT_CUES = 3;
-const MAX_IMAGE_CUES = 3;
 const TEXT_DEFAULT_TAU = 0.22;
 const IMAGE_DEFAULT_TAU = 0.75;
 
@@ -350,7 +300,6 @@ let hotelToRows = new Map(); // hotel_id (string) -> [row_idx,...]
 // Cue state
 let textCues = [];   // [{id, text, embedding, threshold, scores}]
 let imageCues = [];  // [{id, rowIdx, threshold, scores}]
-let pendingImageSlot = null; // id of image cue waiting for a click
 let nextCueId = 1;
 
 // ---------- helpers ----------
@@ -426,17 +375,15 @@ function renderTextCues() {
     });
     textCuesEl.appendChild(div);
   }
-  // render an "+ add" button if under cap
-  if (textCues.length < MAX_TEXT_CUES) {
-    const add = document.createElement("button");
-    add.className = "secondary";
-    add.textContent = "+ Add text cue";
-    add.addEventListener("click", () => {
-      textCues.push({ id: nextCueId++, text: "", embedding: null, threshold: TEXT_DEFAULT_TAU, scores: null });
-      renderTextCues();
-    });
-    textCuesEl.appendChild(add);
-  }
+  // "+ add" button (no cap)
+  const add = document.createElement("button");
+  add.className = "secondary";
+  add.textContent = "+ Add text cue";
+  add.addEventListener("click", () => {
+    textCues.push({ id: nextCueId++, text: "", embedding: null, threshold: TEXT_DEFAULT_TAU, scores: null });
+    renderTextCues();
+  });
+  textCuesEl.appendChild(add);
 }
 
 function imageCueLabel(c) {
@@ -465,26 +412,24 @@ function renderImageCues() {
     const filled = thumbSrc != null;
     const uploading = c.uploading;
     div.className = "cue-row" + (filled ? " active" : " empty");
-    const isTarget = pendingImageSlot === c.id && !filled;
     const thumbInner = uploading
       ? `<span style="color:var(--warn);font-size:10px;">uploading…</span>`
       : filled
         ? `<img src="${thumbSrc}" alt="" />`
-        : (isTarget ? `click<br>a tile<br>below` : `(empty)`);
+        : `(empty)<br><span style="font-size:10px">click to upload</span>`;
     const labelHTML = filled
       ? imageCueLabel(c)
       : (uploading ? '<span style="color:var(--warn)">encoding upload…</span>'
-          : isTarget ? '<span style="color:var(--accent)">awaiting selection — click a tile, or drop/upload a file →</span>'
-          : 'no image selected');
+          : 'no image selected — click thumbnail or Upload button');
     div.innerHTML = `
       <span style="color:var(--muted);font-size:11px;width:14px;">I${c.id}</span>
-      <div class="cue-thumb${isTarget ? " target" : ""}">${thumbInner}</div>
+      <div class="cue-thumb">${thumbInner}</div>
       <div style="flex:1;color:var(--muted);font-size:12px;">${labelHTML}</div>
       <button class="secondary" data-up style="font-size:11px;padding:4px 8px;">Upload</button>
       <input type="file" accept="image/*" style="display:none" />
       <div class="threshold-ctl">
         <span class="val">${c.threshold.toFixed(3)}</span>
-        <input type="range" min="0.40" max="0.95" step="0.005" />
+        <input type="range" min="0.0" max="0.95" step="0.005" />
       </div>
       <button class="x" title="Remove">×</button>
     `;
@@ -501,7 +446,6 @@ function renderImageCues() {
     });
     xBtn.addEventListener("click", () => {
       imageCues = imageCues.filter(x => x !== c);
-      if (pendingImageSlot === c.id) pendingImageSlot = null;
       renderImageCues(); ensureSlot("image");
     });
     // Upload button -> open file picker -> upload + encode -> fill slot
@@ -537,36 +481,31 @@ function renderImageCues() {
         qStatus.textContent = "Image upload failed: " + err.message;
       }
     });
-    // Click empty thumb -> mark this slot as click-target for browse panel
+    // Click empty thumb -> open file picker (same as Upload button)
     const thumb = div.querySelector(".cue-thumb");
+    thumb.style.cursor = "pointer";
     if (!filled) {
-      thumb.style.cursor = "pointer";
-      thumb.addEventListener("click", () => {
-        pendingImageSlot = c.id;
-        renderImageCues();
-      });
+      thumb.title = "Click to upload an image";
+      thumb.addEventListener("click", () => fileInput.click());
     } else {
-      thumb.style.cursor = "pointer";
       thumb.title = "Click to clear this cue";
       thumb.addEventListener("click", () => {
         c.rowIdx = null; c.scores = null;
         c.uploadedThumb = null; c.uploadedName = null; c.uploadedEmbedding = null;
-        pendingImageSlot = c.id;
         renderImageCues();
       });
     }
     imageCuesEl.appendChild(div);
   }
-  if (imageCues.length < MAX_IMAGE_CUES) {
-    const add = document.createElement("button");
-    add.className = "secondary";
-    add.textContent = "+ Add image cue";
-    add.addEventListener("click", () => {
-      imageCues.push({ id: nextCueId++, rowIdx: null, threshold: IMAGE_DEFAULT_TAU, scores: null });
-      renderImageCues();
-    });
-    imageCuesEl.appendChild(add);
-  }
+  // "+ add" button (no cap)
+  const add = document.createElement("button");
+  add.className = "secondary";
+  add.textContent = "+ Add image cue";
+  add.addEventListener("click", () => {
+    imageCues.push({ id: nextCueId++, rowIdx: null, threshold: IMAGE_DEFAULT_TAU, scores: null });
+    renderImageCues();
+  });
+  imageCuesEl.appendChild(add);
 }
 
 function ensureSlot(kind) {
@@ -581,28 +520,6 @@ function escapeHtml(s) {
   }[c]));
 }
 
-// Click handler from browse-tile fills the targeted image cue.
-function assignImageToTargetSlot(rowIdx) {
-  let target = imageCues.find(c => c.id === pendingImageSlot);
-  if (!target) target = imageCues.find(c => c.rowIdx == null);
-  if (!target) {
-    if (imageCues.length < MAX_IMAGE_CUES) {
-      target = { id: nextCueId++, rowIdx: null, threshold: IMAGE_DEFAULT_TAU, scores: null };
-      imageCues.push(target);
-    } else {
-      // No room and nothing targeted — replace last
-      target = imageCues[imageCues.length - 1];
-    }
-  }
-  target.rowIdx = rowIdx;
-  target.scores = null; // invalidate cached cue
-  target.uploadedThumb = null;
-  target.uploadedName = null;
-  target.uploadedEmbedding = null;
-  target.uploading = false;
-  pendingImageSlot = null;
-  renderImageCues();
-}
 
 // ---------- query execution ----------
 let lastResults = null;       // {cues: [{label, kind, refRow?}], cueHotelMax: [Map], orderedHotels: [...]}
@@ -735,69 +652,10 @@ function renderResults() {
   }
 }
 
-// ---------- browse panel ----------
-const browseGridEl = document.getElementById("browseGrid");
-const browseQueryEl = document.getElementById("browseQuery");
-const browseSearchBtn = document.getElementById("browseSearchBtn");
-const browseShuffleBtn = document.getElementById("browseShuffleBtn");
-const browseStatusEl = document.getElementById("browseStatus");
-
-function renderBrowse(order) {
-  browseGridEl.innerHTML = "";
-  const slice = order.slice(0, BROWSE_TOP);
-  const frag = document.createDocumentFragment();
-  for (const { idx, score } of slice) {
-    const m = meta[idx];
-    const h = hotels[m.hotel_id] || { name: `Hotel ${m.hotel_id}` };
-    const btn = document.createElement("button");
-    btn.className = "browse-tile";
-    btn.title = `${h.name}\nClick to use as image cue`;
-    const img = document.createElement("img");
-    img.loading = "lazy"; img.src = m.path;
-    btn.appendChild(img);
-    const lbl = document.createElement("div");
-    lbl.className = "lbl";
-    lbl.textContent = (score !== undefined ? score.toFixed(3) + " · " : "") + h.name;
-    btn.appendChild(lbl);
-    btn.addEventListener("click", () => assignImageToTargetSlot(idx));
-    frag.appendChild(btn);
-  }
-  browseGridEl.appendChild(frag);
-}
-function browseShuffle() {
-  const order = meta.map((_, i) => ({ idx: i }));
-  for (let i = order.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [order[i], order[j]] = [order[j], order[i]];
-  }
-  renderBrowse(order);
-  browseStatusEl.textContent = `random sample of ${N.toLocaleString()} images`;
-}
-async function browseSearch() {
-  const t = browseQueryEl.value.trim();
-  if (!t) { browseShuffle(); return; }
-  browseStatusEl.textContent = "encoding…";
-  try {
-    const payload = await encodeText(t);
-    const q = payload.embedding;
-    if (!q || q.length !== D) throw new Error("bad embedding");
-    const scores = scoreAll(new Float32Array(q));
-    const order = Array.from({ length: N }, (_, i) => ({ idx: i, score: scores[i] }));
-    order.sort((a, b) => b.score - a.score);
-    renderBrowse(order);
-    browseStatusEl.textContent = `top ${BROWSE_TOP} for "${t}"`;
-  } catch (e) {
-    browseStatusEl.textContent = "error: " + e.message;
-  }
-}
-browseSearchBtn.addEventListener("click", browseSearch);
-browseShuffleBtn.addEventListener("click", browseShuffle);
-browseQueryEl.addEventListener("keydown", e => { if (e.key === "Enter") browseSearch(); });
-
 // ---------- main wiring ----------
 runBtn.addEventListener("click", runQuery);
 resetBtn.addEventListener("click", () => {
-  textCues = []; imageCues = []; pendingImageSlot = null;
+  textCues = []; imageCues = [];
   lastResults = null; resultsEl.innerHTML = "";
   // seed one of each
   textCues.push({ id: nextCueId++, text: "", embedding: null, threshold: TEXT_DEFAULT_TAU, scores: null });
@@ -835,7 +693,6 @@ resetBtn.addEventListener("click", () => {
     textCues.push({ id: nextCueId++, text: "", embedding: null, threshold: TEXT_DEFAULT_TAU, scores: null });
     imageCues.push({ id: nextCueId++, rowIdx: null, threshold: IMAGE_DEFAULT_TAU, scores: null });
     renderTextCues(); renderImageCues();
-    browseShuffle();
   } catch (e) {
     console.error(e);
     qStatus.textContent = "Failed to load data: " + e.message;
