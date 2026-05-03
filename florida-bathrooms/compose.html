@@ -88,6 +88,21 @@
     cursor: pointer;
   }
   #qStatus { font-size: 13px; color: var(--muted); flex: 1; }
+  #nameFilter {
+    min-width: 180px;
+    padding: 8px 10px; font-size: 13px;
+    background: #0b0d12; color: var(--text);
+    border: 1px solid var(--border); border-radius: 6px;
+  }
+  #nameFilter:focus { outline: 2px solid var(--accent); border-color: var(--accent); }
+  label.checkbox {
+    display: flex; align-items: center; gap: 6px;
+    color: var(--muted); font-size: 13px; cursor: pointer;
+    padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px;
+    user-select: none;
+  }
+  label.checkbox input { margin: 0; cursor: pointer; }
+  label.checkbox.active { color: var(--text); border-color: var(--accent); }
 
   /* Results */
   #results { padding: 8px 16px; }
@@ -159,6 +174,11 @@
 <div id="queryBar">
   <button id="runBtn" class="primary">Find Hotels</button>
   <button id="resetBtn" class="secondary">Reset cues</button>
+  <input id="nameFilter" type="text" placeholder="Hotel name contains… (e.g. Marriott)" />
+  <label class="checkbox" id="fmLabel">
+    <input id="fmFilter" type="checkbox" />
+    Within 10 mi of Fort Myers
+  </label>
   <span id="qStatus">Loading data…</span>
 </div>
 
@@ -527,6 +547,35 @@ const runBtn = document.getElementById("runBtn");
 const resetBtn = document.getElementById("resetBtn");
 const qStatus = document.getElementById("qStatus");
 const resultsEl = document.getElementById("results");
+const nameFilterEl = document.getElementById("nameFilter");
+const fmFilterEl = document.getElementById("fmFilter");
+const fmLabelEl = document.getElementById("fmLabel");
+
+// Fort Myers, FL center
+const FM_LAT = 26.6406, FM_LNG = -81.8723;
+const FM_RADIUS_MI = 10;
+const MILES_PER_DEG_LAT = 69;
+const MILES_PER_DEG_LNG_AT_FM = 69 * Math.cos(FM_LAT * Math.PI / 180);
+
+function withinFortMyers(h) {
+  if (!h || h.lat == null || h.lng == null) return false;
+  const dLat = (h.lat - FM_LAT) * MILES_PER_DEG_LAT;
+  const dLng = (h.lng - FM_LNG) * MILES_PER_DEG_LNG_AT_FM;
+  return Math.hypot(dLat, dLng) <= FM_RADIUS_MI;
+}
+
+function hotelPassesFilters(hid) {
+  const h = hotels[hid];
+  const nameQ = nameFilterEl.value.trim().toLowerCase();
+  if (nameQ) {
+    const name = (h?.name || "").toLowerCase();
+    if (!name.includes(nameQ)) return false;
+  }
+  if (fmFilterEl.checked) {
+    if (!withinFortMyers(h)) return false;
+  }
+  return true;
+}
 
 async function runQuery() {
   runBtn.disabled = true;
@@ -594,6 +643,7 @@ async function runQuery() {
 function renderResults() {
   if (!lastResults) { resultsEl.innerHTML = ""; return; }
   const { cues, cueHotelMax } = lastResults;
+  fmLabelEl.classList.toggle("active", fmFilterEl.checked);
   // AND combine with current thresholds
   const matches = [];
   for (const hid of hotelToRows.keys()) {
@@ -609,19 +659,22 @@ function renderResults() {
     if (pass) matches.push({ hid, evidence, margin });
   }
   matches.sort((a, b) => b.margin - a.margin);
+  const filtered = matches.filter(m => hotelPassesFilters(m.hid));
+  const filteredOut = matches.length - filtered.length;
 
   // Header: how many hotels match
   const head = document.createElement("div");
   head.style.cssText = "padding:8px 0;color:var(--muted);font-size:13px;";
   head.innerHTML = `
-    <strong style="color:var(--text)">${matches.length.toLocaleString()}</strong>
-    hotel${matches.length===1?"":"s"} match all ${cues.length} cue${cues.length>1?"s":""}
-    ${matches.length > RESULT_TOP ? `(showing top ${RESULT_TOP} by total margin above thresholds)` : ""}
+    <strong style="color:var(--text)">${filtered.length.toLocaleString()}</strong>
+    hotel${filtered.length===1?"":"s"} match all ${cues.length} cue${cues.length>1?"s":""}
+    ${filteredOut ? `(filtered from ${matches.length.toLocaleString()})` : ""}
+    ${filtered.length > RESULT_TOP ? `(showing top ${RESULT_TOP} by total margin above thresholds)` : ""}
   `;
   resultsEl.innerHTML = "";
   resultsEl.appendChild(head);
 
-  for (const m of matches.slice(0, RESULT_TOP)) {
+  for (const m of filtered.slice(0, RESULT_TOP)) {
     const h = hotels[m.hid] || { name: `Hotel ${m.hid}` };
     const card = document.createElement("div");
     card.className = "hotel-card";
@@ -654,6 +707,14 @@ function renderResults() {
 
 // ---------- main wiring ----------
 runBtn.addEventListener("click", runQuery);
+
+// Filter changes: re-aggregate the existing results, no re-encoding needed.
+let nameFilterTimer = null;
+nameFilterEl.addEventListener("input", () => {
+  clearTimeout(nameFilterTimer);
+  nameFilterTimer = setTimeout(() => { if (lastResults) renderResults(); }, 120);
+});
+fmFilterEl.addEventListener("change", () => { if (lastResults) renderResults(); });
 resetBtn.addEventListener("click", () => {
   textCues = []; imageCues = [];
   lastResults = null; resultsEl.innerHTML = "";
