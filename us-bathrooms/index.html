@@ -1,0 +1,438 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>US Hotel Bathrooms with Shower Curtain — CLIP</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<style>
+  :root {
+    --bg: #0f1115;
+    --panel: #171a21;
+    --text: #e6e6e6;
+    --muted: #8b94a3;
+    --accent: #6ea8ff;
+    --border: #252a35;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background: var(--bg); color: var(--text);
+  }
+  header {
+    position: sticky; top: 0; z-index: 10;
+    background: var(--panel); border-bottom: 1px solid var(--border);
+    padding: 12px 16px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap;
+  }
+  header h1 { font-size: 16px; margin: 0; font-weight: 600; }
+  header .row {
+    display: flex; gap: 12px; align-items: center; flex-wrap: wrap;
+    width: 100%;
+  }
+  #query {
+    flex: 1; min-width: 240px;
+    padding: 10px 12px; font-size: 15px;
+    background: #0b0d12; color: var(--text);
+    border: 1px solid var(--border); border-radius: 6px;
+  }
+  #query:focus { outline: 2px solid var(--accent); border-color: var(--accent); }
+  #nameFilter {
+    min-width: 180px;
+    padding: 8px 10px; font-size: 13px;
+    background: #0b0d12; color: var(--text);
+    border: 1px solid var(--border); border-radius: 6px;
+  }
+  #nameFilter:focus { outline: 2px solid var(--accent); border-color: var(--accent); }
+  label.checkbox {
+    display: flex; align-items: center; gap: 6px;
+    color: var(--muted); font-size: 13px; cursor: pointer;
+    padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px;
+    user-select: none;
+  }
+  label.checkbox input { margin: 0; cursor: pointer; }
+  label.checkbox.active { color: var(--text); border-color: var(--accent); }
+  button {
+    padding: 10px 16px; font-size: 14px; font-weight: 500;
+    background: var(--accent); color: #0b0d12; border: 0; border-radius: 6px;
+    cursor: pointer;
+  }
+  button:disabled { opacity: 0.5; cursor: wait; }
+  button.secondary {
+    background: transparent; color: var(--text); border: 1px solid var(--border);
+  }
+  #status { font-size: 13px; color: var(--muted); }
+  #grid {
+    display: grid; gap: 4px; padding: 8px;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  }
+  .tile {
+    position: relative; aspect-ratio: 1; background: #1a1d25; overflow: hidden;
+    border-radius: 4px;
+  }
+  .tile img {
+    width: 100%; height: 100%; object-fit: cover; display: block;
+    loading: lazy;
+  }
+  .score {
+    position: absolute; top: 4px; left: 4px;
+    background: rgba(0,0,0,0.6); color: #fff; padding: 2px 6px;
+    font-size: 11px; border-radius: 3px; font-variant-numeric: tabular-nums;
+  }
+  .hotel-name {
+    position: absolute; top: 0; left: 0; right: 0;
+    background: linear-gradient(to bottom, rgba(0,0,0,0.75), rgba(0,0,0,0));
+    color: #fff; padding: 6px 8px 16px 8px;
+    font-size: 11px; line-height: 1.2;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    pointer-events: none;
+  }
+  .tile a {
+    position: absolute; inset: 0; display: block;
+  }
+  .tile a:focus-visible {
+    outline: 2px solid var(--accent); outline-offset: -2px;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="row">
+    <h1>US Hotel Bathrooms <span style="color:var(--muted);font-weight:400;font-size:13px;margin-left:6px;">(pre-filtered to images with shower curtain)</span></h1>
+    <input id="query" type="text" placeholder="e.g. &quot;bathroom with walk-in shower&quot;, &quot;round mirror over sink&quot;" />
+    <button id="searchBtn">Search</button>
+    <button id="shuffleBtn" class="secondary">Shuffle</button>
+  </div>
+  <div class="row">
+    <input id="nameFilter" type="text" placeholder="Hotel name contains… (e.g. Marriott, Boston, Super 8)" />
+    <span id="status">Loading…</span>
+  </div>
+</header>
+
+<div id="grid"></div>
+
+<script>
+// ---------- config ----------
+const SPACE = "robertpless/clip-text-encoder";
+const SPACE_URL = `https://${SPACE.replace("/", "-")}.hf.space`;
+const ENCODE_URL = `${SPACE_URL}/gradio_api/call/encode`;
+const ENCODE_TIMEOUT_MS = 60_000; // cold starts can take 30–60s
+const FEATURES_URL = "./features_int8.npy";
+const SCALE_URL = "./features_scale.json";
+const INDEX_URL = "./features_index.csv";
+const HOTELS_URL = "./hotels.json";
+const MAX_TILES = 500; // don't render 10k tiles at once
+// ----------------------------
+
+const statusEl = document.getElementById("status");
+const gridEl = document.getElementById("grid");
+const queryEl = document.getElementById("query");
+const searchBtn = document.getElementById("searchBtn");
+const shuffleBtn = document.getElementById("shuffleBtn");
+const nameFilterEl = document.getElementById("nameFilter");
+
+let features = null;   // Int8Array of N*D (quantized)
+let scale = 1.0;       // dequant: float = int8 * scale
+let N = 0, D = 0;
+let meta = [];         // array of {id, hotel_id, path, ...}
+let hotels = {};       // {hotel_id: {name, gpid, lat, lng}}
+let lastOrder = null;  // full sorted order before filtering, for re-render
+let lastQueryLabel = ""; // status-bar context for the current order
+
+function passesFilters(idx) {
+  const m = meta[idx];
+  const h = hotels[m.hotel_id];
+  const nameQ = nameFilterEl.value.trim().toLowerCase();
+  if (nameQ) {
+    const name = (h?.name || "").toLowerCase();
+    if (!name.includes(nameQ)) return false;
+  }
+  return true;
+}
+
+// ---------- npy loader (supports int8 and float32) ----------
+async function loadNpy(url) {
+  const buf = new Uint8Array(await (await fetch(url)).arrayBuffer());
+  // magic \x93NUMPY
+  if (buf[0] !== 0x93 || String.fromCharCode(...buf.slice(1, 6)) !== "NUMPY") {
+    throw new Error("not an .npy file");
+  }
+  const major = buf[6];
+  const headerLen = major === 1
+    ? new DataView(buf.buffer, 8, 2).getUint16(0, true)
+    : new DataView(buf.buffer, 8, 4).getUint32(0, true);
+  const headerStart = major === 1 ? 10 : 12;
+  const header = new TextDecoder().decode(buf.slice(headerStart, headerStart + headerLen));
+  const shapeMatch = header.match(/\(\s*(\d+)\s*,\s*(\d+)\s*\)/);
+  if (!shapeMatch) throw new Error("can't parse shape: " + header);
+  const n = +shapeMatch[1], d = +shapeMatch[2];
+  const dataStart = headerStart + headerLen;
+  const byteStart = buf.byteOffset + dataStart;
+
+  let data;
+  if (header.includes("'|i1'") || header.includes('"|i1"') || header.includes("int8")) {
+    data = new Int8Array(buf.buffer.slice(byteStart, byteStart + n * d));
+  } else if (header.includes("<f4")) {
+    data = new Float32Array(buf.buffer.slice(byteStart, byteStart + n * d * 4));
+  } else {
+    throw new Error("unsupported dtype in header: " + header);
+  }
+  return { data, N: n, D: d };
+}
+
+// ---------- minimal csv parser (handles quoted fields) ----------
+function parseCSV(text) {
+  const rows = [];
+  let i = 0, field = "", row = [], inQuotes = false;
+  while (i < text.length) {
+    const c = text[i];
+    if (inQuotes) {
+      if (c === '"' && text[i+1] === '"') { field += '"'; i += 2; continue; }
+      if (c === '"') { inQuotes = false; i++; continue; }
+      field += c; i++;
+    } else {
+      if (c === '"') { inQuotes = true; i++; continue; }
+      if (c === ",") { row.push(field); field = ""; i++; continue; }
+      if (c === "\n") { row.push(field); rows.push(row); field = ""; row = []; i++; continue; }
+      if (c === "\r") { i++; continue; }
+      field += c; i++;
+    }
+  }
+  if (field.length || row.length) { row.push(field); rows.push(row); }
+  const header = rows.shift();
+  return rows.filter(r => r.length === header.length)
+             .map(r => Object.fromEntries(header.map((h, j) => [h, r[j]])));
+}
+
+// ---------- text encoder (direct REST against Gradio, no @gradio/client) ----------
+// Two-step Gradio call: POST to create event, then GET SSE stream for result.
+async function encodeText(text) {
+  const signal = AbortSignal.timeout(ENCODE_TIMEOUT_MS);
+
+  const postResp = await fetch(ENCODE_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ data: [text] }),
+    signal,
+  });
+  if (!postResp.ok) throw new Error(`encode POST ${postResp.status}`);
+  const { event_id } = await postResp.json();
+  if (!event_id) throw new Error("no event_id");
+
+  const streamResp = await fetch(`${ENCODE_URL}/${event_id}`, { signal });
+  if (!streamResp.ok) throw new Error(`encode stream ${streamResp.status}`);
+  const body = await streamResp.text();
+
+  // SSE: blocks separated by blank lines. Pull the one whose event is "complete".
+  let event = null;
+  for (const line of body.split("\n")) {
+    if (line.startsWith("event:")) {
+      event = line.slice(6).trim();
+    } else if (line.startsWith("data:")) {
+      if (event === "complete") {
+        const parsed = JSON.parse(line.slice(5).trim());
+        // Gradio wraps fn returns in a list; our fn returns a single dict.
+        return Array.isArray(parsed) ? parsed[0] : parsed;
+      }
+      if (event === "error") {
+        throw new Error(`encoder error: ${line.slice(5).trim()}`);
+      }
+    }
+  }
+  throw new Error("no complete event in stream");
+}
+
+// ---------- render ----------
+function render(order) {
+  lastOrder = order;
+  gridEl.innerHTML = "";
+  // Apply filters BEFORE slicing so MAX_TILES counts filtered hits.
+  const filtered = order.filter(o => passesFilters(o.idx));
+  const slice = filtered.slice(0, MAX_TILES);
+  const frag = document.createDocumentFragment();
+  // Update status with filtered count
+  if (lastQueryLabel) {
+    statusEl.textContent =
+      `Showing ${slice.length} of ${filtered.length} matches` +
+      (filtered.length !== order.length ? ` (filtered from ${order.length})` : "") +
+      ` — ${lastQueryLabel}`;
+  }
+  for (const { idx, score } of slice) {
+    const m = meta[idx];
+    const hotel = hotels[m.hotel_id] || { name: `Hotel ${m.hotel_id}`, gpid: null };
+
+    const tile = document.createElement("div");
+    tile.className = "tile";
+
+    const img = document.createElement("img");
+    img.loading = "lazy";
+    img.src = m.path;
+    img.alt = hotel.name;
+    tile.appendChild(img);
+
+    const label = document.createElement("div");
+    label.className = "hotel-name";
+    label.textContent = hotel.name;
+    label.title = hotel.name; // full name on hover
+    tile.appendChild(label);
+
+    if (score !== undefined) {
+      const s = document.createElement("span");
+      s.className = "score";
+      s.textContent = score.toFixed(3);
+      tile.appendChild(s);
+    }
+
+    // Click -> our own hotel page. `ref` is the clicked image's row index in
+    // features_int8.npy; hotel.html uses it to sort by similarity to that image.
+    const a = document.createElement("a");
+    a.href = `./hotel.html?id=${encodeURIComponent(m.hotel_id)}&ref=${idx}`;
+    a.setAttribute("aria-label", `View all images for ${hotel.name}`);
+    tile.appendChild(a);
+
+    frag.appendChild(tile);
+  }
+  gridEl.appendChild(frag);
+}
+
+function shuffle() {
+  const order = meta.map((_, i) => ({ idx: i }));
+  for (let i = order.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [order[i], order[j]] = [order[j], order[i]];
+  }
+  lastQueryLabel = `random sample of ${N} images`;
+  render(order);
+}
+
+// ---------- persistence helpers ----------
+// Back-button from hotel.html should restore the same results without
+// re-encoding. We stash the top-MAX_TILES order in sessionStorage keyed by
+// query, and mirror the query into ?q=… so the URL is shareable and survives
+// a reload.
+const CACHE_KEY = "lastSearch";
+
+function readCachedOrder(query) {
+  try {
+    const raw = sessionStorage.getItem(CACHE_KEY);
+    if (!raw) return null;
+    const obj = JSON.parse(raw);
+    return obj.query === query ? obj.order : null;
+  } catch { return null; }
+}
+
+function writeCachedOrder(query, order) {
+  try {
+    sessionStorage.setItem(CACHE_KEY, JSON.stringify({
+      query,
+      order: order.slice(0, MAX_TILES),
+    }));
+  } catch { /* quota exceeded or disabled — non-fatal */ }
+}
+
+function setUrlQuery(query) {
+  const url = new URL(location.href);
+  if (query) url.searchParams.set("q", query);
+  else url.searchParams.delete("q");
+  history.replaceState(null, "", url);
+}
+
+// ---------- search ----------
+async function search(text) {
+  if (!text.trim()) { shuffle(); return; }
+  searchBtn.disabled = true;
+
+  // Cache hit: we've already computed this query in this session. Render
+  // the stashed order directly — no HF round-trip, no scoring loop.
+  const cached = readCachedOrder(text);
+  if (cached) {
+    lastQueryLabel = `query: "${text}" (cached)`;
+    render(cached);
+    setUrlQuery(text);
+    searchBtn.disabled = false;
+    return;
+  }
+
+  statusEl.textContent = "Encoding query… (first call after idle can take ~30s)";
+  try {
+    const payload = await encodeText(text);
+    const q = payload.embedding;
+    if (!q || q.length !== D) {
+      throw new Error(`bad embedding: len=${q?.length} expected ${D}`);
+    }
+    statusEl.textContent = "Scoring…";
+    // Compute sims: dequantized features (N,D) @ q (D,) -> (N,)
+    // We fold `scale` into the final score rather than per-element,
+    // so: score_i = scale * sum_k (int8_feat[i,k] * q[k])
+    const scores = new Float32Array(N);
+    for (let i = 0; i < N; i++) {
+      let s = 0;
+      const base = i * D;
+      for (let k = 0; k < D; k++) s += features[base + k] * q[k];
+      scores[i] = s * scale;
+    }
+    const order = Array.from({ length: N }, (_, i) => ({ idx: i, score: scores[i] }));
+    order.sort((a, b) => b.score - a.score);
+    lastQueryLabel = `query: "${text}"`;
+    render(order);
+    writeCachedOrder(text, order);
+    setUrlQuery(text);
+  } catch (e) {
+    console.error(e);
+    statusEl.textContent = "Error: " + (e.name === "TimeoutError" ? "request timed out" : e.message);
+  } finally {
+    searchBtn.disabled = false;
+  }
+}
+
+// ---------- init ----------
+(async () => {
+  try {
+    statusEl.textContent = "Loading data…";
+    const [npy, scaleJson, csvText, hotelsJson] = await Promise.all([
+      loadNpy(FEATURES_URL),
+      fetch(SCALE_URL).then(r => r.json()),
+      fetch(INDEX_URL).then(r => r.text()),
+      fetch(HOTELS_URL).then(r => r.json()),
+    ]);
+    features = npy.data; N = npy.N; D = npy.D;
+    scale = scaleJson.scale;
+    hotels = hotelsJson;
+
+    meta = parseCSV(csvText);
+    if (meta.length !== N) {
+      console.warn(`row mismatch: features N=${N}, csv rows=${meta.length}`);
+    }
+
+    // If the URL carries a query (shared link, reload, or back from hotel.html),
+    // re-run that search — it'll hit the session cache if we've seen it before.
+    const urlQuery = new URLSearchParams(location.search).get("q") || "";
+    if (urlQuery) {
+      queryEl.value = urlQuery;
+      search(urlQuery);
+    } else {
+      statusEl.textContent = `Loaded ${N} images (dim=${D}). Showing random sample.`;
+      shuffle();
+    }
+  } catch (e) {
+    console.error(e);
+    statusEl.textContent = "Failed to load data: " + e.message;
+  }
+})();
+
+searchBtn.addEventListener("click", () => search(queryEl.value));
+queryEl.addEventListener("keydown", e => { if (e.key === "Enter") search(queryEl.value); });
+shuffleBtn.addEventListener("click", () => {
+  queryEl.value = "";
+  setUrlQuery("");
+  shuffle();
+});
+
+// Filter changes: re-render the existing order, no re-encoding needed.
+let nameFilterTimer = null;
+nameFilterEl.addEventListener("input", () => {
+  clearTimeout(nameFilterTimer);
+  nameFilterTimer = setTimeout(() => { if (lastOrder) render(lastOrder); }, 120);
+});
+</script>
+</body>
+</html>

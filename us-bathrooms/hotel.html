@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Hotel — US Bathrooms</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<style>
+  :root {
+    --bg: #0f1115;
+    --panel: #171a21;
+    --text: #e6e6e6;
+    --muted: #8b94a3;
+    --accent: #6ea8ff;
+    --border: #252a35;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background: var(--bg); color: var(--text);
+  }
+  header {
+    position: sticky; top: 0; z-index: 10;
+    background: var(--panel); border-bottom: 1px solid var(--border);
+    padding: 12px 16px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap;
+  }
+  header h1 { font-size: 16px; margin: 0; font-weight: 600; flex-shrink: 0; }
+  header h1 .count { color: var(--muted); font-weight: 400; font-size: 13px; margin-left: 8px; }
+  header .spacer { flex: 1; }
+  header a.btn {
+    padding: 8px 14px; font-size: 13px; font-weight: 500;
+    background: var(--accent); color: #0b0d12; border-radius: 6px;
+    text-decoration: none; white-space: nowrap;
+  }
+  header a.back {
+    color: var(--muted); text-decoration: none; font-size: 14px;
+    padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px;
+  }
+  header a.back:hover { color: var(--text); }
+  #grid {
+    display: grid; gap: 4px; padding: 8px;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  }
+  .tile {
+    position: relative; aspect-ratio: 1; background: #1a1d25; overflow: hidden;
+    border-radius: 4px;
+  }
+  .tile img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .tile.anchor { outline: 2px solid var(--accent); outline-offset: -2px; }
+  .tile.anchor::before {
+    content: "clicked";
+    position: absolute; top: 4px; left: 4px;
+    background: var(--accent); color: #0b0d12;
+    padding: 2px 6px; font-size: 10px; font-weight: 600; border-radius: 3px;
+    z-index: 1;
+  }
+  #status { font-size: 13px; color: var(--muted); padding: 16px; }
+</style>
+</head>
+<body>
+
+<header>
+  <a class="back" href="./">← All hotels</a>
+  <h1 id="title">Loading…<span class="count" id="count"></span></h1>
+  <div class="spacer"></div>
+  <a id="gmapsLink" class="btn" href="#" target="_blank" rel="noopener">View on Google Maps ↗</a>
+</header>
+
+<div id="grid"></div>
+<div id="status"></div>
+
+<script>
+const INDEX_URL = "./features_index.csv";
+const HOTELS_URL = "./hotels.json";
+const FEATURES_URL = "./features_int8.npy";
+
+const params = new URLSearchParams(window.location.search);
+const hotelId = params.get("id");
+const refRaw = params.get("ref");
+const refIdx = refRaw !== null && /^\d+$/.test(refRaw) ? parseInt(refRaw, 10) : null;
+
+const titleEl = document.getElementById("title");
+const countEl = document.getElementById("count");
+const gridEl = document.getElementById("grid");
+const statusEl = document.getElementById("status");
+const gmapsLink = document.getElementById("gmapsLink");
+
+// Minimal CSV parser (handles quoted fields)
+function parseCSV(text) {
+  const rows = [];
+  let i = 0, field = "", row = [], inQuotes = false;
+  while (i < text.length) {
+    const c = text[i];
+    if (inQuotes) {
+      if (c === '"' && text[i+1] === '"') { field += '"'; i += 2; continue; }
+      if (c === '"') { inQuotes = false; i++; continue; }
+      field += c; i++;
+    } else {
+      if (c === '"') { inQuotes = true; i++; continue; }
+      if (c === ",") { row.push(field); field = ""; i++; continue; }
+      if (c === "\n") { row.push(field); rows.push(row); field = ""; row = []; i++; continue; }
+      if (c === "\r") { i++; continue; }
+      field += c; i++;
+    }
+  }
+  if (field.length || row.length) { row.push(field); rows.push(row); }
+  const header = rows.shift();
+  return rows.filter(r => r.length === header.length)
+             .map(r => Object.fromEntries(header.map((h, j) => [h, r[j]])));
+}
+
+// npy loader — same as index.html, int8 only here since that's all we ship.
+async function loadNpyInt8(url) {
+  const buf = new Uint8Array(await (await fetch(url)).arrayBuffer());
+  if (buf[0] !== 0x93 || String.fromCharCode(...buf.slice(1, 6)) !== "NUMPY") {
+    throw new Error("not an .npy file");
+  }
+  const major = buf[6];
+  const headerLen = major === 1
+    ? new DataView(buf.buffer, 8, 2).getUint16(0, true)
+    : new DataView(buf.buffer, 8, 4).getUint32(0, true);
+  const headerStart = major === 1 ? 10 : 12;
+  const header = new TextDecoder().decode(buf.slice(headerStart, headerStart + headerLen));
+  const shapeMatch = header.match(/\(\s*(\d+)\s*,\s*(\d+)\s*\)/);
+  if (!shapeMatch) throw new Error("can't parse shape: " + header);
+  const n = +shapeMatch[1], d = +shapeMatch[2];
+  const byteStart = buf.byteOffset + headerStart + headerLen;
+  const data = new Int8Array(buf.buffer.slice(byteStart, byteStart + n * d));
+  return { data, N: n, D: d };
+}
+
+(async () => {
+  if (!hotelId) {
+    titleEl.textContent = "Missing hotel id";
+    statusEl.textContent = "Open this page with ?id=<hotel_id> in the URL.";
+    return;
+  }
+
+  try {
+    const [csvText, hotels] = await Promise.all([
+      fetch(INDEX_URL).then(r => r.text()),
+      fetch(HOTELS_URL).then(r => r.json()),
+    ]);
+
+    const meta = parseCSV(csvText);
+    // Track original CSV row index; that's the row in features_int8.npy.
+    const hotelRows = [];
+    for (let i = 0; i < meta.length; i++) {
+      if (meta[i].hotel_id === hotelId) hotelRows.push({ idx: i, m: meta[i] });
+    }
+
+    const hotel = hotels[hotelId] || { name: `Hotel ${hotelId}`, gpid: null };
+    document.title = `${hotel.name} — US Bathrooms`;
+    titleEl.firstChild.textContent = hotel.name;
+    countEl.textContent = `${hotelRows.length} image${hotelRows.length === 1 ? "" : "s"}`;
+
+    if (hotel.gpid) {
+      gmapsLink.href = `https://www.google.com/maps/place/?q=place_id:${encodeURIComponent(hotel.gpid)}`;
+    } else {
+      gmapsLink.href = `https://www.google.com/search?q=${encodeURIComponent(hotel.name + " hotel")}`;
+      gmapsLink.textContent = "Search Google ↗";
+    }
+
+    if (hotelRows.length === 0) {
+      statusEl.textContent = "No images found for this hotel.";
+      return;
+    }
+
+    // If we got a ref, sort by similarity to features[refIdx]. Features are L2-
+    // normalized, so dot product of int8 rows gives cosine similarity up to a
+    // positive scale factor — fine for ordering, no need to dequantize.
+    let ordered = hotelRows;
+    if (refIdx !== null) {
+      try {
+        const { data: features, N, D } = await loadNpyInt8(FEATURES_URL);
+        if (refIdx >= 0 && refIdx < N) {
+          const refBase = refIdx * D;
+          for (const row of hotelRows) {
+            let s = 0;
+            const base = row.idx * D;
+            for (let k = 0; k < D; k++) s += features[refBase + k] * features[base + k];
+            row.score = s;
+          }
+          ordered = hotelRows.slice().sort((a, b) => b.score - a.score);
+        }
+      } catch (e) {
+        // Fall back to original order on any failure — sorting is a nicety.
+        console.warn("similarity sort failed, keeping original order:", e);
+      }
+    }
+
+    const frag = document.createDocumentFragment();
+    for (const row of ordered) {
+      const tile = document.createElement("div");
+      tile.className = "tile" + (row.idx === refIdx ? " anchor" : "");
+      const img = document.createElement("img");
+      img.loading = "lazy";
+      img.src = row.m.path;
+      img.alt = hotel.name;
+      tile.appendChild(img);
+      frag.appendChild(tile);
+    }
+    gridEl.appendChild(frag);
+  } catch (e) {
+    console.error(e);
+    titleEl.textContent = "Error";
+    statusEl.textContent = e.message;
+  }
+})();
+</script>
+</body>
+</html>
