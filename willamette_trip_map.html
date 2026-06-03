@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Willamette Valley Trip Map</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<style>
+  html, body { margin: 0; padding: 0; height: 100%; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+  #wrap { display: flex; height: 100vh; }
+  #map { flex: 1; }
+  #side { width: 320px; overflow-y: auto; padding: 16px; border-left: 1px solid #ddd; background: #fafafa; }
+  h2 { margin-top: 0; font-size: 18px; }
+  h3 { font-size: 14px; margin-bottom: 4px; margin-top: 18px; color: #444; text-transform: uppercase; letter-spacing: 0.5px; }
+  .item { margin-bottom: 12px; font-size: 13px; line-height: 1.4; }
+  .item a { color: #1565c0; text-decoration: none; }
+  .item a:hover { text-decoration: underline; }
+  .pin { display: inline-block; width: 18px; height: 18px; border-radius: 50%; margin-right: 6px; vertical-align: middle; border: 2px solid white; box-shadow: 0 0 0 1px rgba(0,0,0,0.3); }
+  .popup-title { font-weight: bold; font-size: 14px; margin-bottom: 4px; }
+  .popup-desc { font-size: 12px; color: #555; margin-bottom: 6px; }
+  .popup-links a { display: inline-block; margin-right: 8px; font-size: 12px; }
+  @media (max-width: 700px) {
+    #wrap { flex-direction: column; }
+    #side { width: auto; border-left: none; border-top: 1px solid #ddd; max-height: 40vh; }
+  }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div id="map"></div>
+  <div id="side">
+    <h2>Willamette Valley Trip</h2>
+    <h3>Things to do</h3>
+    <div id="todo"></div>
+    <h3>Lodging</h3>
+    <div id="stay"></div>
+    <p style="font-size: 11px; color: #888; margin-top: 24px;">Click any pin for details. "Open in Google Maps" gets you turn-by-turn.</p>
+  </div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+const places = [
+  {
+    type: "todo",
+    name: "Antique Powerland",
+    color: "#e53935",
+    coords: [44.9939, -122.9909],
+    addr: "3995 Brooklake Rd NE, Brooks, OR",
+    desc: "60+ acres of steam tractors, trolleys, fire trucks, working narrow-gauge train.",
+    url: "https://www.antiquepowerland.com/"
+  },
+  {
+    type: "todo",
+    name: "Gilbert House Children's Museum",
+    color: "#fb8c00",
+    coords: [44.9444, -123.0411],
+    addr: "116 Marion St NE, Salem, OR",
+    desc: "Children's museum in Victorian houses (A.C. Gilbert, Erector Set inventor). Outdoor play, riverfront.",
+    url: "https://www.acgilbert.org/"
+  },
+  {
+    type: "todo",
+    name: "Evergreen Aviation & Space Museum",
+    color: "#43a047",
+    coords: [45.2042, -123.1437],
+    addr: "500 NE Captain Michael King Smith Way, McMinnville, OR",
+    desc: "Spruce Goose, SR-71, kid-sized cockpits. Wings & Waves Waterpark next door.",
+    url: "https://www.evergreenmuseum.org/"
+  },
+  {
+    type: "todo",
+    name: "Stoller Family Estate (winery)",
+    color: "#8e24aa",
+    coords: [45.2389, -123.1003],
+    addr: "16161 NE McDougall Rd, Dayton, OR",
+    desc: "Big lawn, bocce, kid-tolerant outdoor seating.",
+    url: "https://www.stollerfamilyestate.com/"
+  },
+  {
+    type: "todo",
+    name: "Brooks Winery",
+    color: "#6d4c41",
+    coords: [45.1019, -123.1842],
+    addr: "21101 SE Cherry Blossom Ln, Amity, OR",
+    desc: "Biodynamic Eola-Amity Hills producer; Riesling + Pinot. Great views, modern tasting room.",
+    url: "https://brookswine.com/"
+  },
+  {
+    type: "todo",
+    name: "Bill Smart & Cindy Grimm",
+    color: "#1e88e5",
+    coords: [44.5646, -123.2620],
+    addr: "Corvallis, OR (approx — drop their address in)",
+    desc: "Friends in Corvallis.",
+    url: null
+  }
+];
+
+const lodging = [
+  {
+    name: "Airbnb: the WTF one (too small)",
+    color: "#9e9e9e",
+    coords: null,
+    addr: null,
+    url: "https://www.airbnb.com/rooms/887097570974647887",
+    note: "Curiosity click — not actually big enough."
+  },
+  {
+    name: "Airbnb: Dallas, OR",
+    color: "#00897b",
+    coords: [44.9193, -123.3170],
+    addr: "Dallas, OR",
+    url: "https://www.airbnb.com/rooms/53068691",
+    note: "Plausible for the group."
+  },
+  {
+    name: "Airbnb: between Independence & Rosedale",
+    color: "#00897b",
+    coords: [44.8500, -123.1300],
+    addr: "Between Independence and Rosedale, OR",
+    url: "https://www.airbnb.com/rooms/16929760",
+    note: "Plausible for the group."
+  }
+];
+
+const map = L.map('map').setView([44.95, -123.1], 9);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  attribution: '&copy; OpenStreetMap contributors',
+  maxZoom: 19
+}).addTo(map);
+
+const bounds = [];
+places.forEach(p => {
+  const icon = L.divIcon({
+    className: '',
+    html: `<div style="background:${p.color};width:22px;height:22px;border-radius:50%;border:3px solid white;box-shadow:0 1px 4px rgba(0,0,0,0.5);"></div>`,
+    iconSize: [22,22],
+    iconAnchor: [11,11]
+  });
+  const m = L.marker(p.coords, { icon }).addTo(map);
+  const gmapsUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(p.addr)}`;
+  const directionsUrl = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(p.addr)}`;
+  let html = `<div class="popup-title">${p.name}</div>`;
+  html += `<div class="popup-desc">${p.desc}<br><em>${p.addr}</em></div>`;
+  html += `<div class="popup-links">`;
+  if (p.url) html += `<a href="${p.url}" target="_blank">Website</a>`;
+  html += `<a href="${gmapsUrl}" target="_blank">Google Maps</a>`;
+  html += `<a href="${directionsUrl}" target="_blank">Directions</a>`;
+  html += `</div>`;
+  m.bindPopup(html);
+  bounds.push(p.coords);
+
+  const side = document.getElementById('todo');
+  side.innerHTML += `
+    <div class="item">
+      <span class="pin" style="background:${p.color}"></span>
+      <strong>${p.name}</strong><br>
+      ${p.desc}<br>
+      ${p.url ? `<a href="${p.url}" target="_blank">Website</a> · ` : ''}
+      <a href="${gmapsUrl}" target="_blank">Google Maps</a>
+    </div>`;
+});
+
+map.fitBounds(bounds, { padding: [40,40] });
+
+const stay = document.getElementById('stay');
+lodging.forEach(l => {
+  // pin if we have coords
+  if (l.coords) {
+    const icon = L.divIcon({
+      className: '',
+      html: `<div style="background:${l.color};width:22px;height:22px;border:3px solid white;box-shadow:0 1px 4px rgba(0,0,0,0.5);transform:rotate(45deg);"></div>`,
+      iconSize: [22,22],
+      iconAnchor: [11,11]
+    });
+    const m = L.marker(l.coords, { icon }).addTo(map);
+    const gmapsUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(l.addr)}`;
+    let html = `<div class="popup-title">${l.name}</div>`;
+    html += `<div class="popup-desc">${l.note}<br><em>${l.addr}</em></div>`;
+    html += `<div class="popup-links">`;
+    html += `<a href="${l.url}" target="_blank">Airbnb</a>`;
+    html += `<a href="${gmapsUrl}" target="_blank">Google Maps</a>`;
+    html += `</div>`;
+    m.bindPopup(html);
+    bounds.push(l.coords);
+  }
+  stay.innerHTML += `
+    <div class="item">
+      ${l.coords ? `<span class="pin" style="background:${l.color};border-radius:0;transform:rotate(45deg);"></span>` : ''}
+      <strong>${l.name}</strong><br>
+      <span style="color:#666">${l.note}</span><br>
+      <a href="${l.url}" target="_blank">View on Airbnb</a>
+    </div>`;
+});
+
+// refit with lodging included
+map.fitBounds(bounds, { padding: [40,40] });
+</script>
+</body>
+</html>
