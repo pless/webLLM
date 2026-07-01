@@ -123,7 +123,7 @@ const map = new maplibregl.Map({
       attribution:"© OpenStreetMap, © CARTO · imagery: Wikimedia Commons"}},
     layers:[{id:"bg",type:"raster",source:"carto"}]
   },
-  center:[10,50], zoom:4, maxZoom:19
+  center:[16,22], zoom:2.7, maxZoom:19   // global: Europe + Africa in view
 });
 map.addControl(new maplibregl.NavigationControl({showCompass:false}),"bottom-right");
 window._map = map;
@@ -172,7 +172,10 @@ function buildBuildings(bdata){
   applyFilter();
 }
 
-map.once("idle", async ()=>{
+// Load data as soon as the style is ready (not on 'idle', which also waits for
+// basemap tiles to settle — a slow/blocked basemap would otherwise stall the
+// whole app). The font bug that originally forced 'idle' is fixed.
+async function initData(){
   const bdata = await (await fetch("data/buildings_interiors.geojson")).json();
   window.BDATA = bdata;
   buildBuildings(bdata);
@@ -184,7 +187,8 @@ map.once("idle", async ()=>{
   applyFilter();   // populate matchcount now that the stat element exists
   const sel=document.getElementById("country");
   meta.countries.forEach(cc=>{const o=document.createElement("option");o.value=cc;o.textContent=cc;sel.appendChild(o);});
-});
+}
+if(map.loaded()) initData(); else map.on("load", initData);
 
 // cluster click -> zoom in
 map.on("click","cl", async (e)=>{
