@@ -137,6 +137,12 @@ CATS.forEach(([k,name])=>{
   d.onclick=()=>{ active.has(k)?active.delete(k):active.add(k); d.classList.toggle("off"); applyFilter(); };
   li.appendChild(d);
 });
+// note explaining the dimmed / amber-ringed points
+const note=document.createElement("div");
+note.style.cssText="margin-top:7px;padding-top:7px;border-top:1px solid var(--line);font-size:11px;color:var(--mut);line-height:1.5";
+note.innerHTML=`<span class="dot" style="background:#7a8894;opacity:.5;box-shadow:0 0 0 1.4px #e0a53a"></span>`+
+  `dimmed + amber ring = discovered from<br>Commons imagery (not in Wikidata)`;
+li.appendChild(note);
 // Filter the SOURCE data (not just a layer) so the CLUSTERS reflect both the
 // active category set and the min-photos threshold, then re-cluster.
 function applyFilter(){
@@ -168,7 +174,11 @@ function buildBuildings(bdata){
   map.addLayer({id:"pts",type:"circle",source:"b",filter:["!",["has","point_count"]],
     paint:{"circle-color":catColorExpr,
       "circle-radius":["interpolate",["linear"],["zoom"],6,3.2,12,5,16,8],
-      "circle-stroke-width":1,"circle-stroke-color":"#0c1117"}});
+      // k=0 => building not in Wikidata (discovered from Commons imagery): dim it
+      // and give it an amber ring so it reads as "found, not a known building".
+      "circle-opacity":["case",["==",["get","k"],0],0.5,1],
+      "circle-stroke-width":["case",["==",["get","k"],0],1.4,1],
+      "circle-stroke-color":["case",["==",["get","k"],0],"#e0a53a","#0c1117"]}});
   applyFilter();
 }
 
