@@ -229,9 +229,12 @@ async function selectBuilding(p){
   const srcLink = known
     ? `<a href="https://www.wikidata.org/wiki/${p.q}" target="_blank">Wikidata</a>`
     : `<a href="https://commons.wikimedia.org/w/index.php?search=${encodeURIComponent(p.l)}&title=Special:MediaSearch&type=image" target="_blank">Commons</a> · <span style="color:#e0a53a">discovered from imagery</span>`;
+  const approx = p.a===1
+    ? ` · <span style="color:#e0a53a" title="Placed from the town/city in the name — the pin is town-level, not the exact building">◎ approx. location (town-level)</span>`
+    : "";
   document.getElementById("sub").innerHTML =
     `<span class="chip" style="background:${cssColor(p.c)}">${cat?cat[1]:p.c}</span> · ${p.cc} · `+
-    `${p.n} interior image${p.n>1?"s":""} · ${srcLink}`;
+    `${p.n} interior image${p.n>1?"s":""} · ${srcLink}${approx}`;
   const grid=document.getElementById("grid");
   grid.innerHTML='<div class="empty">loading images…</div>';
   if(!shardCache[p.cc]){
