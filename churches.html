@@ -140,8 +140,8 @@ CATS.forEach(([k,name])=>{
 // note explaining the dimmed / amber-ringed points
 const note=document.createElement("div");
 note.style.cssText="margin-top:7px;padding-top:7px;border-top:1px solid var(--line);font-size:11px;color:var(--mut);line-height:1.5";
-note.innerHTML=`<span class="dot" style="background:#7a8894;opacity:.5;box-shadow:0 0 0 1.4px #e0a53a"></span>`+
-  `dimmed + amber ring = discovered from<br>Commons imagery (not in Wikidata)`;
+note.innerHTML=`<span class="dot" style="background:#7a8894;box-shadow:0 0 0 2.5px #ffb020"></span>`+
+  `amber halo = discovered from Commons<br>imagery (not in Wikidata)`;
 li.appendChild(note);
 // Filter the SOURCE data (not just a layer) so the CLUSTERS reflect both the
 // active category set and the min-photos threshold, then re-cluster.
@@ -174,11 +174,13 @@ function buildBuildings(bdata){
   map.addLayer({id:"pts",type:"circle",source:"b",filter:["!",["has","point_count"]],
     paint:{"circle-color":catColorExpr,
       "circle-radius":["interpolate",["linear"],["zoom"],6,3.2,12,5,16,8],
-      // k=0 => building not in Wikidata (discovered from Commons imagery): dim it
-      // and give it an amber ring so it reads as "found, not a known building".
-      "circle-opacity":["case",["==",["get","k"],0],0.5,1],
-      "circle-stroke-width":["case",["==",["get","k"],0],1.4,1],
-      "circle-stroke-color":["case",["==",["get","k"],0],"#e0a53a","#0c1117"]}});
+      // k=0 => building not in Wikidata (discovered from Commons imagery): give it
+      // a thick bright-amber halo so it stands out clearly from Wikidata points.
+      "circle-opacity":["case",["==",["get","k"],0],0.9,1],
+      "circle-stroke-width":["interpolate",["linear"],["zoom"],
+        6,["case",["==",["get","k"],0],1.6,0.8],
+        16,["case",["==",["get","k"],0],3.5,1]],
+      "circle-stroke-color":["case",["==",["get","k"],0],"#ffb020","#0c1117"]}});
   applyFilter();
 }
 
@@ -223,10 +225,13 @@ async function selectBuilding(p){
   document.getElementById("title").textContent = p.l;
   const cat = CATS.find(c=>c[0]===p.c);
   document.getElementById("sub").className="";
+  const known = p.k===1 && /^Q\d/.test(p.q||"");
+  const srcLink = known
+    ? `<a href="https://www.wikidata.org/wiki/${p.q}" target="_blank">Wikidata</a>`
+    : `<a href="https://commons.wikimedia.org/w/index.php?search=${encodeURIComponent(p.l)}&title=Special:MediaSearch&type=image" target="_blank">Commons</a> · <span style="color:#e0a53a">discovered from imagery</span>`;
   document.getElementById("sub").innerHTML =
     `<span class="chip" style="background:${cssColor(p.c)}">${cat?cat[1]:p.c}</span> · ${p.cc} · `+
-    `${p.n} interior image${p.n>1?"s":""} · `+
-    `<a href="https://www.wikidata.org/wiki/${p.q}" target="_blank">Wikidata</a>`;
+    `${p.n} interior image${p.n>1?"s":""} · ${srcLink}`;
   const grid=document.getElementById("grid");
   grid.innerHTML='<div class="empty">loading images…</div>';
   if(!shardCache[p.cc]){
