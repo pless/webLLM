@@ -120,7 +120,7 @@ const map = new maplibregl.Map({
       tiles:["https://a.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png",
              "https://b.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png",
              "https://c.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png"],
-      attribution:"© OpenStreetMap, © CARTO · imagery: Wikimedia Commons"}},
+      attribution:"© OpenStreetMap, © CARTO · imagery: Wikimedia Commons & DPLA (rights per item)"}},
     layers:[{id:"bg",type:"raster",source:"carto"}]
   },
   center:[16,22], zoom:2.7, maxZoom:19   // global: Europe + Africa in view
@@ -226,7 +226,11 @@ async function selectBuilding(p){
   const cat = CATS.find(c=>c[0]===p.c);
   document.getElementById("sub").className="";
   const known = p.k===1 && /^Q\d/.test(p.q||"");
-  const srcLink = known
+  const srcLink = p.src==="dpla"
+    ? `<a href="${p.src_url||'https://dp.la'}" target="_blank">via DPLA</a>`
+      + (p.inst?` · ${p.inst}`:``)
+      + (p.rights?` · <span style="color:var(--mut)" title="${(p.rights+'').replace(/"/g,'')}">${(p.rights+'').slice(0,44)}</span>`:``)
+    : known
     ? `<a href="https://www.wikidata.org/wiki/${p.q}" target="_blank">Wikidata</a>`
     : `<a href="https://commons.wikimedia.org/w/index.php?search=${encodeURIComponent(p.l)}&title=Special:MediaSearch&type=image" target="_blank">Commons</a> · <span style="color:#e0a53a">discovered from imagery</span>`;
   const approx = p.a===1
