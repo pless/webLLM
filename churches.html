@@ -107,9 +107,17 @@ let minN = 4;                                     // min interior photos to show
 const shardCache = {};                            // cc -> {qid:[urls]}
 let current = {imgs:[], i:0};                      // lightbox state
 
-const thumb = (u,w)=> u + (u.includes("?")?"&":"?") + "width="+w;
+const U = e => (e && typeof e==="object") ? e.u : e;          // shard entry -> image URL
+const isFlickr = u => u.includes("staticflickr");
+const thumb = (u,w)=> isFlickr(u) ? u : u + (u.includes("?")?"&":"?") + "width="+w;
 const commonsPage = u => u.replace("/wiki/Special:FilePath/","/wiki/File:");
 const fileName = u => decodeURIComponent(u.split("Special:FilePath/")[1]||"").replace(/_/g," ");
+// caption/attribution for one shard entry (Flickr object -> owner+license+page; else Commons)
+function capHTML(e){
+  if(e && typeof e==="object")
+    return `${e.o?("© "+e.o+" · "):""}${e.l||"Flickr"} · <a href="${e.p||'#'}" target="_blank">Flickr ↗</a>`;
+  return `${fileName(e)} · <a href="${commonsPage(e)}" target="_blank">view on Commons</a>`;
+}
 
 const map = new maplibregl.Map({
   container:"map",
@@ -120,7 +128,7 @@ const map = new maplibregl.Map({
       tiles:["https://a.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png",
              "https://b.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png",
              "https://c.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png"],
-      attribution:"© OpenStreetMap, © CARTO · imagery: Wikimedia Commons & DPLA (rights per item)"}},
+      attribution:"© OpenStreetMap, © CARTO · imagery: Wikimedia Commons, DPLA & Flickr (rights per item)"}},
     layers:[{id:"bg",type:"raster",source:"carto"}]
   },
   center:[16,22], zoom:2.7, maxZoom:19   // global: Europe + Africa in view
@@ -226,7 +234,9 @@ async function selectBuilding(p){
   const cat = CATS.find(c=>c[0]===p.c);
   document.getElementById("sub").className="";
   const known = p.k===1 && /^Q\d/.test(p.q||"");
-  const srcLink = p.src==="dpla"
+  const srcLink = p.src==="flickr"
+    ? `<span style="color:#e0a53a">via Flickr · CC (credit per image)</span>`
+    : p.src==="dpla"
     ? `<a href="${p.src_url||'https://dp.la'}" target="_blank">via DPLA</a>`
       + (p.inst?` · ${p.inst}`:``)
       + (p.rights?` · <span style="color:var(--mut)" title="${(p.rights+'').replace(/"/g,'')}">${(p.rights+'').slice(0,44)}</span>`:``)
@@ -249,9 +259,11 @@ async function selectBuilding(p){
   current.imgs = urls;
   grid.innerHTML="";
   if(!urls.length){ grid.innerHTML='<div class="empty">No images found in shard.</div>'; return; }
-  urls.forEach((u,idx)=>{
+  urls.forEach((entry,idx)=>{
+    const u=U(entry);
     const img=new Image();
-    img.loading="lazy"; img.src=thumb(u,300); img.title=fileName(u);
+    img.loading="lazy"; img.src=thumb(u,300);
+    img.title=(entry&&typeof entry==="object")?(entry.o?("© "+entry.o):"Flickr"):fileName(u);
     img.onclick=()=>openLB(idx);
     grid.appendChild(img);
   });
@@ -262,11 +274,10 @@ function openLB(i){current.i=i;renderLB();document.getElementById("lb").classLis
 function closeLB(){document.getElementById("lb").classList.remove("on");}
 function step(d){current.i=(current.i+d+current.imgs.length)%current.imgs.length;renderLB();}
 function renderLB(){
-  const u=current.imgs[current.i];
-  document.getElementById("lbimg").src=thumb(u,1400);
+  const e=current.imgs[current.i];
+  document.getElementById("lbimg").src=thumb(U(e),1400);
   document.getElementById("lbcap").innerHTML=
-    `${current.i+1} / ${current.imgs.length} — ${fileName(u)} · `+
-    `<a href="${commonsPage(u)}" target="_blank">view on Commons</a>`;
+    `${current.i+1} / ${current.imgs.length} — ${capHTML(e)}`;
 }
 document.addEventListener("keydown",e=>{
   if(!document.getElementById("lb").classList.contains("on"))return;
